@@ -51,6 +51,13 @@ pub struct StructuredAnswer {
     pub answer: String,
     pub key_points: Vec<String>,
     pub follow_ups: Vec<String>,
+    /// Cuantas entradas traia el array `citations`, se hayan podido leer o no.
+    ///
+    /// Sirve para distinguir dos situaciones que dan la misma lista vacia y no son lo
+    /// mismo: un modelo que no cito nada, y uno que cito pero con un formato que no se
+    /// entiende. Medido con llama3.2:1b, que devolvio el titulo de la seccion
+    /// (`"fragment": "Maquinaria y Equipos"`) donde el prompt pide el numero.
+    pub citations_seen: usize,
 }
 
 pub fn parse(raw: &str) -> AppResult<StructuredAnswer> {
@@ -71,8 +78,14 @@ pub fn parse(raw: &str) -> AppResult<StructuredAnswer> {
         .ok_or_else(|| AppError::Provider("el modelo no devolvio ninguna respuesta".into()))?
         .to_owned();
 
+    let raw_citations = field(&value, &["citations", "sources", "fuentes"]);
+
     Ok(StructuredAnswer {
-        citations: citations_from(field(&value, &["citations", "sources", "fuentes"])),
+        citations: citations_from(raw_citations),
+        citations_seen: match raw_citations {
+            Some(Value::Array(items)) => items.len(),
+            _ => 0,
+        },
         // Ausente cuenta como `true`: el veredicto de §6 no depende de este campo, y un
         // modelo que se olvida de ponerlo no debe bloquear una respuesta bien citada.
         answerable: field(&value, &["answerable", "hasEvidence", "has_evidence"])
@@ -513,6 +526,26 @@ mod tests {
         let raw = r#"{"answer":"x","citations":[3]}"#;
         let parsed = parse(raw).expect("parsear");
         assert_eq!(parsed.citations, vec![RawCitation { fragment: 3, quote: String::new() }]);
+    }
+
+    /// El caso real de llama3.2:1b: cito el titulo de la seccion en vez del numero. La
+    /// cita no se puede leer, pero que existiera hay que saberlo, porque "no cito nada" y
+    /// "cito mal" se le explican al usuario de forma distinta.
+    #[test]
+    fn una_cita_con_formato_ilegible_se_cuenta_aunque_no_se_pueda_leer() {
+        let raw = r#"{"answer":"x","citations":[
+            {"fragment":"Maquinaria y Equipos","quote":"Carnet de Carretillero"}
+        ]}"#;
+        let parsed = parse(raw).expect("parsear");
+
+        assert!(parsed.citations.is_empty());
+        assert_eq!(parsed.citations_seen, 1);
+    }
+
+    #[test]
+    fn sin_citas_no_se_cuenta_ninguna() {
+        assert_eq!(parse(r#"{"answer":"x","citations":[]}"#).expect("parsear").citations_seen, 0);
+        assert_eq!(parse(r#"{"answer":"x"}"#).expect("parsear").citations_seen, 0);
     }
 
     #[test]

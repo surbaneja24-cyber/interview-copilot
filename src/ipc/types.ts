@@ -153,6 +153,7 @@ export type UnsupportedDetail =
   | { readonly reason: 'noContext' }
   | { readonly reason: 'modelFoundNothing' }
   | { readonly reason: 'noCitations' }
+  | { readonly reason: 'malformedCitations'; readonly seen: number }
   | { readonly reason: 'inventedFragment'; readonly fragment: number }
   | { readonly reason: 'noLiteralSupport'; readonly dropped: readonly DroppedCitation[] };
 

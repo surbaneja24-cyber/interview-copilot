@@ -109,6 +109,13 @@ impl Answering<'_> {
             Err(err) => return emit_failure(err, emit),
         };
 
+        // Solo en desarrollo: la respuesta en crudo lleva dentro trozos del CV del
+        // usuario y no tiene por que acabar en ningun log de una version distribuida.
+        // Mientras se calibra el filtro de citas es lo unico que permite distinguir un
+        // modelo que parafrasea de uno que se inventa el formato.
+        #[cfg(debug_assertions)]
+        log::info!("respuesta cruda del modelo: {raw}");
+
         // Veredicto definitivo sobre la respuesta completa. El del streaming solo servia
         // para decidir si se podia ir ensenando.
         let parsed = match answer::parse(&raw) {

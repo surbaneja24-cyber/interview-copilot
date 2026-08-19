@@ -87,6 +87,10 @@ pub enum Unsupported {
     ModelFoundNothing,
     /// No cito nada.
     NoCitations,
+    /// Cito, pero en un formato que no se puede comprobar: por ejemplo el titulo de la
+    /// seccion en vez del numero de fragmento. No es lo mismo que no citar, y al usuario
+    /// hay que decirle cual de las dos cosas pasa.
+    MalformedCitations { seen: usize },
     /// Cito un fragmento que nunca se le envio: referencia inventada.
     InventedFragment { fragment: usize },
     /// Cito, pero ninguna cita esta literalmente en los documentos.
@@ -112,6 +116,11 @@ impl Unsupported {
                  asi que se ha descartado."
                     .into()
             }
+            Self::MalformedCitations { seen } => format!(
+                "El modelo cito {seen} fragmento(s) pero en un formato que no se puede \
+                 comprobar, asi que la respuesta se ha descartado. Suele pasar con modelos \
+                 pequenos: prueba con uno mayor."
+            ),
             Self::InventedFragment { fragment } => format!(
                 "La respuesta citaba un fragmento ({fragment}) que no existe entre los que \
                  se le enviaron. Se ha descartado por completo: una referencia inventada \
@@ -140,6 +149,14 @@ pub enum Verdict {
 pub fn verify(answer: &StructuredAnswer, fragments: &FragmentSet) -> Verdict {
     if !answer.answerable {
         return Verdict::Unsupported(Unsupported::ModelFoundNothing);
+    }
+
+    // Citar mal y no citar acaban en la misma lista vacia, pero para el usuario son
+    // problemas distintos: uno se arregla cambiando de modelo y el otro no.
+    if answer.citations.is_empty() && answer.citations_seen > 0 {
+        return Verdict::Unsupported(Unsupported::MalformedCitations {
+            seen: answer.citations_seen,
+        });
     }
 
     check_citations(&answer.citations, fragments)
@@ -281,6 +298,7 @@ mod tests {
 
     fn respuesta(citations: Vec<RawCitation>, answerable: bool) -> StructuredAnswer {
         StructuredAnswer {
+            citations_seen: citations.len(),
             citations,
             answerable,
             answer: "Lideré una migración a microservicios.".into(),
@@ -414,6 +432,21 @@ mod tests {
                 assert_eq!(dropped[0].reason, DropReason::EmptyQuote);
             }
             other => panic!("deberia rechazarse: {other:?}"),
+        }
+    }
+
+    /// Distinguirlo de `NoCitations` importa: aqui el modelo si intento respaldar la
+    /// respuesta, solo que en un formato que no se puede verificar.
+    #[test]
+    fn citar_mal_no_es_lo_mismo_que_no_citar() {
+        let mut answer = respuesta(Vec::new(), true);
+        answer.citations_seen = 2;
+
+        match verify(&answer, &fragmentos()) {
+            Verdict::Unsupported(Unsupported::MalformedCitations { seen }) => {
+                assert_eq!(seen, 2);
+            }
+            other => panic!("deberia distinguirse: {other:?}"),
         }
     }
 

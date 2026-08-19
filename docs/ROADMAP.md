@@ -118,8 +118,24 @@ Falta la mitad que no depende del código:
   El detector de hardware ya avisa de que en esta máquina tardará decenas de segundos.
 - Con **OpenAI**: pegar una clave en Ajustes.
 
-Lo que solo se puede saber probando con un modelo de verdad, y que conviene medir en
-cuanto haya uno:
+### Medido el 2026-08-19 con Ollama
+
+Primera prueba contra un servidor real, no contra el simulador.
+
+- **El camino local funciona**: la app lista los modelos de Ollama, persiste el cambio de
+  proveedor y genera por el endpoint compatible con OpenAI.
+- **`qwen2.5:3b` no arranca en esta máquina.** Pide un buffer de 1266 MB y no lo hay. El
+  detector de hardware ya recomendaba un 1B; tenía razón.
+- **`llama3.2:1b` se inventó la experiencia entera** y adornó con dos citas literales
+  reales del CV. Se bloqueó, pero por escribir el título de la sección donde se pide el
+  número, no por detectar la invención. El detalle está en `ARCHITECTURE.md` §5 porque
+  cambia lo que se puede afirmar de esta capa.
+- Consecuencia inmediata: citar mal y no citar ya no dan el mismo mensaje. Uno se arregla
+  cambiando de modelo y el otro no.
+- Latencia: entre 90 y 100 s por respuesta con el 1B en CPU. Sin sorpresa respecto a lo
+  previsto en `ARCHITECTURE.md` §0.
+
+Lo que sigue sin medirse, y hace falta un modelo capaz para ello:
 
 - **Cuánto parafrasea.** El filtro exige cita literal. Si un modelo de 3B parafrasea casi
   siempre, rechazará respuestas buenas. Por eso las citas descartadas se cuentan y se

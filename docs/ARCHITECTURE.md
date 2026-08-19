@@ -221,6 +221,23 @@ Los dos modos de fallo no se tratan igual, y la asimetría es deliberada:
 
 **Lo que esto no garantiza,** y conviene tenerlo escrito para no venderlo de más: que el fragmento citado respalde *lo que la respuesta afirma*. Un modelo podría copiar una frase real del CV y colgarle al lado una afirmación inventada. Contra eso no hay comprobación mecánica; lo que hay es que la UI enseña la cita junto a la respuesta para que el candidato lo vea de un vistazo.
 
+Esto dejó de ser una hipótesis el 2026-08-19. Con `llama3.2:1b` sobre el CV real, ante "cuéntame un proyecto complicado":
+
+```json
+"citations": [
+  {"fragment": "Maquinaria y Equipos", "quote": "Carnet de Carretillero"},
+  {"fragment": "Competencias Transversales", "quote": "Capacidad de trabajo físico pesado"}
+],
+"answer": "…asistente de gestión logística en una empresa de construcción… 5000 toneladas
+           de materiales, incluyendo hormigón, acero y plástico…"
+```
+
+La respuesta es ficción entera: ni el puesto, ni la empresa, ni las cifras están en el CV. **Las dos citas literales sí lo están.** Se descartó, pero por el motivo equivocado: porque el modelo escribió el título de la sección donde el prompt pide el número, no porque se detectara la invención. Con `"fragment": 1` habría pasado el filtro.
+
+Conclusión que hay que tener presente antes de fiarse de esta capa: la cita literal demuestra que el modelo **leyó** los documentos, no que la respuesta **salga** de ellos. Es una barrera contra el modelo que se inventa el respaldo, no contra el que se inventa la historia y adorna con una frase real.
+
+La siguiente barrera candidata, sin implementar y sin medir: exigir que toda cifra que aparezca en la respuesta aparezca también en los fragmentos citados. Habría cazado las "5000 toneladas". Es estrecho y mecánico, que es lo que aquí funciona; pero antes de ponerlo hay que medir cuántas respuestas buenas rechaza, igual que se hizo con el umbral de similitud y con el modelo de embeddings.
+
 Un prompt que dice "no inventes" es una petición. Un umbral de similitud parecía una garantía y la medición demuestra que no lo es. Una cita literal verificada contra el texto enviado sí lo es: falla en cerrado, porque sin cita válida no hay respuesta que mostrar.
 
 ### Enseñar sin adelantarse: por qué las citas van primero en el JSON

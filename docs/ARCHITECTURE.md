@@ -247,6 +247,20 @@ De ahí salen dos decisiones más:
   dura 10: sin retención, nueve de cada diez picos no se verían y una saturación breve
   pasaría desapercibida, que es exactamente lo que un medidor tiene que enseñar.
 
+**El audio del sistema no es otro módulo.** WASAPI graba lo que suena abriendo un
+dispositivo de *salida* en modo captura, y cpal pone el flag de loopback por su cuenta al
+construir un flujo de entrada sobre un `eRender`. Separar por fuente —micrófono para el
+usuario, loopback para el entrevistador— es además cómo se distingue quién habla en el MVP 1,
+sin reconocer voces. Con altavoces en vez de auriculares esa separación deja de funcionar, y
+la UI lo dice.
+
+Hay una trampa medida el 2026-08-19: **en silencio, el loopback no entrega ni una muestra**,
+porque WASAPI solo produce datos mientras la salida está activa. Se resuelve manteniendo
+abierto un flujo de reproducción mudo sobre el mismo dispositivo; con él, un segundo de
+silencio entrega las 96 000 muestras que le tocan. Importa más de lo que parece: sin eso, el
+hueco en el flujo tiene el tamaño exacto de las pausas, y la pausa es la señal con la que la
+Fase 5 detecta el fin de turno.
+
 El suelo del medidor es −100 dB y no −∞ por un motivo que no es estético: JSON no tiene
 infinito, `serde_json` lo serializa como `null`, y al otro lado hay un `number`. Hay un
 test que lo fija.

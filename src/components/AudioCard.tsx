@@ -1,191 +1,86 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { audioInputs, captureStatus, startCapture, stopCapture } from '@/ipc/commands';
-import { describeError, useAsync } from '@/hooks/useAsync';
-import type { CaptureStatus } from '@/ipc/types';
+import { captureStatus, stopCapture } from '@/ipc/commands';
+import { describeError } from '@/hooks/useAsync';
+import { SourcePanel } from '@/components/audio/SourcePanel';
+import type { CaptureSnapshot } from '@/ipc/types';
 
-/** Cada cuánto se pregunta el nivel mientras hay captura. */
+/** Cada cuánto se pregunta el nivel. Una sola consulta trae las dos fuentes. */
 const POLL_MS = 100;
 
-/** Extremo bajo de la barra. Por debajo de −60 dB no hay nada que enseñar. */
-const FLOOR_DBFS = -60;
-
 /**
- * Micrófono y medidor de nivel (§11).
+ * Audio de la entrevista (§11): el micrófono y lo que suena en el equipo.
  *
- * El medidor no es un adorno: es la única forma de saber, antes de una entrevista, si el
- * dispositivo elegido es el que de verdad está oyendo. Un selector sin medidor deja al
- * usuario descubriendo en mitad de la entrevista que estaba capturando el micrófono de la
- * webcam apagada.
+ * El medidor no es un adorno. Es la única forma de saber, antes de la entrevista y no
+ * durante, si lo que está abierto es de verdad lo que oye: un selector sin medidor deja al
+ * usuario capturando el micrófono de una webcam apagada y enterándose tarde.
  */
 export function AudioCard() {
-  const devices = useAsync(audioInputs);
-  const [device, setDevice] = useState<string | null>(null);
-  const [status, setStatus] = useState<CaptureStatus | null>(null);
+  const [snapshot, setSnapshot] = useState<CaptureSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const timer = useRef<number | null>(null);
 
-  const stopPolling = useCallback(() => {
-    if (timer.current !== null) {
-      window.clearInterval(timer.current);
-      timer.current = null;
-    }
+  const poll = useCallback(() => {
+    captureStatus()
+      .then((next) => {
+        setSnapshot(next);
+        setError(null);
+      })
+      .catch((cause: unknown) => {
+        setError(describeError(cause));
+      });
   }, []);
 
-  // Parar la captura al salir de la pantalla: dejar el micrófono cogido porque el usuario
-  // cambió de pestaña sería quedarse escuchando sin decirlo.
   useEffect(() => {
+    poll();
+    timer.current = window.setInterval(poll, POLL_MS);
+
     return () => {
-      stopPolling();
-      void stopCapture();
+      if (timer.current !== null) window.clearInterval(timer.current);
+      // Salir de la pantalla suelta el audio. Quedarse escuchando porque el usuario cambió
+      // de pestaña sería escuchar sin decirlo.
+      void stopCapture('mic');
+      void stopCapture('system');
     };
-  }, [stopPolling]);
+  }, [poll]);
 
-  const onStart = useCallback(() => {
-    setError(null);
-    startCapture(device)
-      .then((first) => {
-        setStatus(first);
-        stopPolling();
-        timer.current = window.setInterval(() => {
-          captureStatus()
-            .then(setStatus)
-            .catch((cause: unknown) => {
-              setError(describeError(cause));
-              stopPolling();
-            });
-        }, POLL_MS);
-      })
-      .catch((cause: unknown) => {
-        setError(describeError(cause));
-        setStatus(null);
-      });
-  }, [device, stopPolling]);
-
-  const onStop = useCallback(() => {
-    stopPolling();
-    stopCapture()
-      .then(() => {
-        setStatus(null);
-      })
-      .catch((cause: unknown) => {
-        setError(describeError(cause));
-      });
-  }, [stopPolling]);
-
-  const capturing = status?.capturing === true;
-  // Abrir el dispositivo y no recibir nada es un fallo distinto de no poder abrirlo, y
-  // en pantalla se parecen: los dos enseñan una barra plana.
-  const silent = capturing && status.frames === 0;
+  const indicator = snapshot?.indicator ?? 'OFF';
 
   return (
     <section className="card">
       <div className="model__head">
-        <h2>Micrófono</h2>
-        <span className={`status ${capturing ? 'status--on' : ''}`}>
+        <h2>Audio</h2>
+        <span className={`status ${indicator === 'OFF' ? '' : 'status--on'}`}>
           <i />
-          {capturing ? 'MIC' : 'parado'}
+          {indicator}
         </span>
       </div>
 
-      <p className="muted small">
-        El audio del sistema —lo que dice el entrevistador en la videollamada— todavía no se
-        captura; llega en el paso siguiente. Esto es solo el micrófono, y sirve para
-        comprobar que el dispositivo elegido es el que de verdad oye.
+      <p className="muted">
+        Dos fuentes separadas a propósito: por el micrófono hablas tú y por el audio del
+        sistema habla el entrevistador. Es así como la app distingue quién dice qué, sin
+        tener que reconocer voces. Con altavoces en vez de auriculares tu voz vuelve por el
+        audio del sistema y esa separación deja de funcionar.
       </p>
 
-      <div className="form">
-        <label>
-          Dispositivo
-          <select
-            value={device ?? ''}
-            disabled={capturing}
-            onChange={(event) => {
-              setDevice(event.target.value === '' ? null : event.target.value);
-            }}
-          >
-            <option value="">El que use el sistema por defecto</option>
-            {devices.state.status === 'ready' &&
-              devices.state.value.map((input) => (
-                <option key={input.id} value={input.id}>
-                  {input.name}
-                  {input.isDefault ? ' (por defecto)' : ''} — {input.sampleRate} Hz,{' '}
-                  {input.channels} canales
-                </option>
-              ))}
-          </select>
-        </label>
-      </div>
+      <SourcePanel
+        source="mic"
+        title="Micrófono"
+        explanation="Tu voz. Habla y la barra tiene que moverse."
+        silenceHint="El dispositivo abrió pero no entrega ninguna muestra. Suele ser el micrófono silenciado por hardware o el permiso de micrófono de Windows."
+        status={snapshot?.mic ?? null}
+        onChanged={poll}
+      />
 
-      {devices.state.status === 'error' && <p className="error">{devices.state.message}</p>}
-      {devices.state.status === 'ready' && devices.state.value.length === 0 && (
-        <p className="muted">Este equipo no tiene ninguna entrada de audio.</p>
-      )}
+      <SourcePanel
+        source="system"
+        title="Audio del sistema"
+        explanation="Lo que suena en tu equipo, que en una entrevista es la voz del entrevistador. Se graba abriendo la salida —los altavoces o los auriculares— en modo captura; por eso aquí se eligen salidas y no entradas."
+        silenceHint="La salida abrió pero no llega nada. Si acabas de cambiar de dispositivo de reproducción, vuelve a arrancar la captura sobre el nuevo."
+        status={snapshot?.system ?? null}
+        onChanged={poll}
+      />
 
-      <Meter status={status} />
-
-      <div className="model__actions">
-        {capturing ? (
-          <button type="button" className="btn" onClick={onStop}>
-            Parar
-          </button>
-        ) : (
-          <button type="button" className="btn" onClick={onStart}>
-            Escuchar
-          </button>
-        )}
-        <button
-          type="button"
-          className="btn btn--ghost"
-          disabled={capturing}
-          onClick={devices.reload}
-        >
-          Volver a buscar dispositivos
-        </button>
-      </div>
-
-      {status !== null && (
-        <p className="muted small">
-          {status.device} — {status.sampleRate} Hz, {status.channels} canales,{' '}
-          {status.frames.toLocaleString('es-ES')} muestras.
-        </p>
-      )}
-      {silent && (
-        <p className="notice notice--warn">
-          El dispositivo abrió pero no está entregando ninguna muestra. Suele ser el
-          micrófono silenciado por hardware o el permiso de micrófono de Windows.
-        </p>
-      )}
-      {status?.error != null && <p className="error">{status.error}</p>}
       {error !== null && <p className="error">{error}</p>}
     </section>
   );
-}
-
-function Meter({ status }: { readonly status: CaptureStatus | null }) {
-  const level = status?.level ?? { rmsDbfs: FLOOR_DBFS, peakDbfs: FLOOR_DBFS };
-
-  return (
-    <>
-      <div className="meter">
-        <div className="meter__bar" style={{ width: `${String(toPercent(level.rmsDbfs))}%` }} />
-        <div className="meter__peak" style={{ left: `${String(toPercent(level.peakDbfs))}%` }} />
-      </div>
-      <div className="meter__scale">
-        <span>−60 dB</span>
-        <span>
-          {status === null
-            ? 'sin capturar'
-            : `${level.rmsDbfs.toFixed(1)} dB · pico ${level.peakDbfs.toFixed(1)} dB`}
-        </span>
-        <span>0 dB</span>
-      </div>
-    </>
-  );
-}
-
-/** De decibelios a ancho de barra. Lineal en dB, que es como se percibe el volumen. */
-function toPercent(dbfs: number): number {
-  if (dbfs <= FLOOR_DBFS) return 0;
-  if (dbfs >= 0) return 100;
-  return Math.round(((dbfs - FLOOR_DBFS) / -FLOOR_DBFS) * 100);
 }

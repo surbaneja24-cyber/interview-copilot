@@ -13,7 +13,7 @@ use std::path::PathBuf;
 
 use tauri::Manager;
 
-use audio::{CaptureStatus, InputDevice};
+use audio::{CaptureStatus, InputDevice, Source};
 use error::{AppError, AppResult};
 use hardware::HardwareReport;
 use llm::answering::{self, AnswerEvent};
@@ -22,7 +22,7 @@ use llm::{LlmSettings, ProviderKind};
 use rag::indexer::{IndexReport, Indexer};
 use rag::retriever::{Retrieval, Retriever, DEFAULT_TOP_K};
 use rag::{extract, vector_store};
-use state::{AppState, ModelStatus};
+use state::{AppState, CaptureSnapshot, ModelStatus};
 use storage::{Db, Document, DocumentKind, NewDocument, NewProject, Project};
 
 const DB_FILE: &str = "interview-copilot.db";
@@ -160,31 +160,35 @@ fn delete_all_data(state: tauri::State<'_, AppState>) -> AppResult<()> {
 // Audio (§11)
 // ---------------------------------------------------------------------------
 
-/// Microfonos que ve el sistema. Se consulta cada vez y no se cachea: enchufar unos
-/// cascos entre dos aperturas de Ajustes es lo normal, no la excepcion.
+/// Dispositivos que ve el sistema para una fuente. Para el audio del sistema son las
+/// salidas, que es como funciona el loopback.
+///
+/// Se consulta cada vez y no se cachea: enchufar unos cascos entre dos aperturas de
+/// Ajustes es lo normal, no la excepcion.
 #[tauri::command]
-fn audio_inputs() -> AppResult<Vec<InputDevice>> {
-    audio::inputs()
+fn audio_devices(source: Source) -> AppResult<Vec<InputDevice>> {
+    audio::devices(source)
 }
 
-/// Abre el microfono. Sin dispositivo, el que el sistema tenga por defecto.
+/// Abre una fuente. Sin dispositivo, el que el sistema tenga por defecto.
 #[tauri::command]
 fn start_capture(
     state: tauri::State<'_, AppState>,
+    source: Source,
     device: Option<String>,
 ) -> AppResult<CaptureStatus> {
-    state.start_capture(device)
+    state.start_capture(source, device)
 }
 
 #[tauri::command]
-fn stop_capture(state: tauri::State<'_, AppState>) -> AppResult<()> {
-    state.stop_capture()
+fn stop_capture(state: tauri::State<'_, AppState>, source: Source) -> AppResult<()> {
+    state.stop_capture(source)
 }
 
-/// Nivel y estado de la captura. La UI lo pide mientras dibuja la barra; por eso el nivel
-/// no viaja por un `Channel` como la respuesta del LLM (ver `audio::capture`).
+/// Nivel y estado de las dos fuentes. La UI lo pide mientras dibuja las barras; por eso el
+/// nivel no viaja por un `Channel` como la respuesta del LLM (ver `audio::capture`).
 #[tauri::command]
-fn capture_status(state: tauri::State<'_, AppState>) -> CaptureStatus {
+fn capture_status(state: tauri::State<'_, AppState>) -> CaptureSnapshot {
     state.capture_status()
 }
 
@@ -316,7 +320,7 @@ pub fn run() {
             load_model,
             release_embedder,
             delete_all_data,
-            audio_inputs,
+            audio_devices,
             start_capture,
             stop_capture,
             capture_status,

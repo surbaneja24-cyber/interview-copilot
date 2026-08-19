@@ -484,3 +484,14 @@ code {
   font-size: 0.72rem;
   font-variant-numeric: tabular-nums;
 }
+
+/* Cada fuente de audio, separada de la siguiente sin llegar a ser otra tarjeta. */
+.source {
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+}
+
+.source h3 {
+  margin: 0;
+}

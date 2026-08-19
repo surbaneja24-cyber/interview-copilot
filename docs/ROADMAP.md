@@ -172,7 +172,7 @@ compilar nada de C++— y whisper.cpp el último, que es el que exige compilar c
 - [x] Enumerar dispositivos de entrada, con el identificador estable de cpal 0.17
 - [x] Captura de micrófono (`cpal`, WASAPI) en su propio hilo
 - [x] Medidor de nivel: RMS y pico retenido, con su barra en Ajustes (§11)
-- [ ] Loopback del sistema (WASAPI) e indicador MIC / SYSTEM AUDIO / BOTH
+- [x] Loopback del sistema (WASAPI) e indicador MIC / SYSTEM AUDIO / BOTH
 - [ ] VAD con detección de fin de turno
 - [ ] `LocalWhisperProvider` con whisper.cpp, descarga de modelos gestionada por la app
 - [ ] Transcripción incremental sobre ventanas solapadas
@@ -202,9 +202,27 @@ Tres decisiones de esta parte, para no rehacerlas:
 - **Se cuentan las muestras recibidas, no solo el nivel.** Un micrófono silenciado por
   hardware y una sala en silencio dan la misma barra plana, y no son el mismo problema.
 
-**Pendiente cuando entre el loopback:** el nivel de dos fuentes a la vez y el indicador de
-§11 completo. Hoy la tarjeta dice sin rodeos que el audio del sistema todavía no se captura,
-en vez de enseñar un selector MIC / SYSTEM / BOTH con dos opciones que no hacen nada.
+### El loopback, y la trampa que sí estaba ahí (2026-08-19)
+
+El audio del sistema **no lleva código aparte**: cpal activa `AUDCLNT_STREAMFLAGS_LOOPBACK`
+solo con abrir un dispositivo de salida como si fuera de entrada. Lo único que cambia entre
+las dos fuentes es de qué lista sale el dispositivo y de dónde su configuración.
+
+Lo que sí hizo falta salió de medir, no de razonar. **En silencio, el loopback no entrega
+ni una muestra:** WASAPI solo produce datos mientras la salida está activa. Medido con un
+segundo de sala callada: 0 muestras. El medidor se quedaría congelado y el reloj de la
+transcripción tendría agujeros del tamaño exacto de las pausas, que es donde vive el fin de
+turno que la Fase 5 tiene que detectar.
+
+El apaño es mantener abierto un flujo de reproducción mudo sobre el mismo dispositivo. Tras
+ponerlo, el mismo segundo de silencio entrega 96 000 muestras — 48 000 Hz × 2 canales, justo
+lo que tiene que ser— y con un WAV sonando, pico de −9,0 dB. El test `#[ignore]` que lo mide
+reproduce un sonido del propio Windows y compara los dos tramos, así que si algún día deja
+de hacer falta o deja de funcionar, se sabrá.
+
+**Lo que el loopback no arregla:** con altavoces en vez de auriculares, la voz del usuario
+vuelve por la salida y la separación por fuente deja de separar. Es una limitación real y la
+UI la dice en vez de fingir que no existe.
 
 ## Fase 5 — Entrevista en vivo (cierre del MVP 1)
 

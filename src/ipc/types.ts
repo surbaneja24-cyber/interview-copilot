@@ -203,6 +203,12 @@ export interface InputDevice {
   readonly sampleRate: number;
 }
 
+/**
+ * De dónde se captura. `system` es el loopback de WASAPI: lo que suena por los altavoces
+ * o los auriculares, o sea la voz del entrevistador en la videollamada.
+ */
+export type Source = 'mic' | 'system';
+
 /** Decibelios a fondo de escala: 0 es el máximo y el suelo es −100, nunca −∞. */
 export interface AudioLevel {
   readonly rmsDbfs: number;
@@ -210,6 +216,7 @@ export interface AudioLevel {
 }
 
 export interface CaptureStatus {
+  readonly source: Source;
   readonly capturing: boolean;
   readonly device: string | null;
   readonly sampleRate: number;
@@ -219,4 +226,11 @@ export interface CaptureStatus {
   readonly frames: number;
   /** Fallo posterior al arranque: el dispositivo se fue a mitad. */
   readonly error: string | null;
+}
+
+export interface CaptureSnapshot {
+  readonly mic: CaptureStatus;
+  readonly system: CaptureStatus;
+  /** El indicador de §11, resuelto en el backend: MIC / SYSTEM AUDIO / BOTH / OFF. */
+  readonly indicator: string;
 }

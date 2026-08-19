@@ -1,11 +1,11 @@
 //! Captura de audio y medida de nivel (§11 del spec).
 //!
-//! De momento solo micrófono. El loopback del sistema —el audio del entrevistador en una
-//! videollamada— es el paso siguiente y lleva WASAPI aparte, asi que no hay ningun tipo
-//! aqui que finja soportarlo: un `AudioSource::SystemAudio` sin implementacion detras
-//! seria una promesa en un enum.
+//! Dos fuentes: el microfono (la voz del usuario) y el audio del sistema por loopback de
+//! WASAPI (la voz del entrevistador en la videollamada). Se capturan por separado a
+//! proposito: separar por fuente es lo que distingue quien habla en el MVP 1, sin tener
+//! que reconocer voces.
 
 pub mod capture;
 pub mod level;
 
-pub use capture::{inputs, CaptureStatus, InputDevice, Recorder};
+pub use capture::{devices, CaptureStatus, InputDevice, Recorder, Source};

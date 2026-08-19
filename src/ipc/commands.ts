@@ -2,6 +2,7 @@ import { Channel, invoke } from '@tauri-apps/api/core';
 import type {
   AnswerEvent,
   AnswerStyle,
+  CaptureSnapshot,
   CaptureStatus,
   DocumentInfo,
   DocumentKind,
@@ -14,6 +15,7 @@ import type {
   Project,
   ProviderKind,
   Retrieval,
+  Source,
 } from '@/ipc/types';
 
 /**
@@ -135,24 +137,28 @@ export async function ask(
 // Audio (fase 4)
 // ---------------------------------------------------------------------------
 
-/** Se consulta cada vez: enchufar unos cascos entre dos visitas a Ajustes es lo normal. */
-export function audioInputs(): Promise<readonly InputDevice[]> {
-  return invoke<InputDevice[]>('audio_inputs');
+/**
+ * Dispositivos de una fuente. Para `system` son las **salidas**: el loopback graba lo que
+ * el equipo reproduce. Se consulta cada vez porque enchufar unos cascos entre dos visitas
+ * a Ajustes es lo normal.
+ */
+export function audioDevices(source: Source): Promise<readonly InputDevice[]> {
+  return invoke<InputDevice[]>('audio_devices', { source });
 }
 
-/** `null` abre el micrófono que el sistema tenga por defecto. */
-export function startCapture(device: string | null): Promise<CaptureStatus> {
-  return invoke<CaptureStatus>('start_capture', { device });
+/** `null` abre el dispositivo que el sistema tenga por defecto para esa fuente. */
+export function startCapture(source: Source, device: string | null): Promise<CaptureStatus> {
+  return invoke<CaptureStatus>('start_capture', { source, device });
 }
 
-export async function stopCapture(): Promise<void> {
-  await invoke('stop_capture');
+export async function stopCapture(source: Source): Promise<void> {
+  await invoke('stop_capture', { source });
 }
 
 /**
- * Nivel y estado de la captura. Se pregunta al ritmo al que se dibuja la barra; el nivel
- * no viaja por un `Channel` porque serían cien mensajes por segundo para un dibujo.
+ * Nivel y estado de las dos fuentes. Se pregunta al ritmo al que se dibujan las barras; el
+ * nivel no viaja por un `Channel` porque serían cien mensajes por segundo para un dibujo.
  */
-export function captureStatus(): Promise<CaptureStatus> {
-  return invoke<CaptureStatus>('capture_status');
+export function captureStatus(): Promise<CaptureSnapshot> {
+  return invoke<CaptureSnapshot>('capture_status');
 }

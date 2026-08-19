@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use crate::audio::{CaptureStatus, Recorder};
+use crate::audio::{CaptureStatus, Recorder, Source};
 use crate::embedding::LocalEmbeddingProvider;
 use crate::error::{AppError, AppResult};
 use crate::llm::settings::SETTINGS_KEY;
@@ -30,10 +30,11 @@ pub struct AppState {
     /// unica forma de que un cambio en Ajustes no deje viva una conexion a un extremo que
     /// el usuario acaba de dejar de usar.
     llm: Mutex<Option<Arc<dyn LlmProvider>>>,
-    /// La captura de audio, si hay alguna en marcha. Solo una: dos flujos abiertos sobre
-    /// el mismo microfono se pelean por el dispositivo y ninguno de los dos entrega nada
-    /// util.
-    capture: Mutex<Option<Recorder>>,
+    /// Las capturas en marcha, una por fuente. Dos flujos sobre el **mismo** dispositivo
+    /// se pelean y ninguno entrega nada util; microfono y salida son dispositivos
+    /// distintos y se capturan a la vez, que es justo lo que hace falta en una entrevista.
+    mic: Mutex<Option<Recorder>>,
+    system: Mutex<Option<Recorder>>,
 }
 
 impl AppState {
@@ -43,7 +44,8 @@ impl AppState {
             models_dir,
             embedder: Mutex::new(None),
             llm: Mutex::new(None),
-            capture: Mutex::new(None),
+            mic: Mutex::new(None),
+            system: Mutex::new(None),
         }
     }
 
@@ -81,46 +83,64 @@ impl AppState {
         }
     }
 
-    /// Arranca la captura, parando la anterior si la habia.
+    fn slot(&self, source: Source) -> &Mutex<Option<Recorder>> {
+        match source {
+            Source::Mic => &self.mic,
+            Source::System => &self.system,
+        }
+    }
+
+    /// Arranca la captura de una fuente, parando la que hubiera de esa misma fuente.
     ///
-    /// El orden importa y es al reves de lo que parece: primero se suelta la que hubiera
+    /// El orden importa y es al reves de lo que parece: primero se suelta la anterior
     /// —soltarla es lo que cierra el dispositivo— y solo despues se abre la nueva. Al
     /// reves, cambiar de microfono fallaria porque el anterior seguiria cogido.
-    pub fn start_capture(&self, device: Option<String>) -> AppResult<CaptureStatus> {
+    pub fn start_capture(&self, source: Source, device: Option<String>) -> AppResult<CaptureStatus> {
         let mut slot = self
-            .capture
+            .slot(source)
             .lock()
             .map_err(|err| AppError::Poisoned(err.to_string()))?;
 
         slot.take();
-        let recorder = Recorder::start(device)?;
+        let recorder = Recorder::start(source, device)?;
         let status = recorder.status();
         *slot = Some(recorder);
 
         Ok(status)
     }
 
-    pub fn stop_capture(&self) -> AppResult<()> {
+    pub fn stop_capture(&self, source: Source) -> AppResult<()> {
         let mut slot = self
-            .capture
+            .slot(source)
             .lock()
             .map_err(|err| AppError::Poisoned(err.to_string()))?;
 
         if slot.take().is_some() {
-            log::info!("captura de audio detenida");
+            log::info!("captura de audio detenida ({source:?})");
         }
 
         Ok(())
     }
 
-    /// Estado y nivel actuales. Lo llama la UI varias veces por segundo mientras haya una
-    /// barra en pantalla, asi que no puede hacer nada caro: leer dos atomicos.
-    pub fn capture_status(&self) -> CaptureStatus {
-        self.capture
+    /// Estado y nivel de las dos fuentes. Lo llama la UI varias veces por segundo mientras
+    /// haya una barra en pantalla, asi que no puede hacer nada caro: leer unos atomicos.
+    pub fn capture_status(&self) -> CaptureSnapshot {
+        let mic = self.status_of(Source::Mic);
+        let system = self.status_of(Source::System);
+
+        CaptureSnapshot {
+            indicator: indicator(mic.capturing, system.capturing),
+            mic,
+            system,
+        }
+    }
+
+    fn status_of(&self, source: Source) -> CaptureStatus {
+        self.slot(source)
             .lock()
             .ok()
             .and_then(|slot| slot.as_ref().map(Recorder::status))
-            .unwrap_or_else(CaptureStatus::idle)
+            .unwrap_or_else(|| CaptureStatus::idle(source))
     }
 
     /// Devuelve el proveedor de embeddings, cargandolo si es la primera vez.
@@ -197,6 +217,27 @@ fn build_provider(settings: &LlmSettings) -> AppResult<Arc<dyn LlmProvider>> {
     };
 
     Ok(Arc::new(HttpProvider::from_settings(settings, api_key)?))
+}
+
+/// Las dos fuentes de audio a la vez, con el indicador de §11 ya resuelto.
+///
+/// Quien decide si esto es MIC, SYSTEM AUDIO o BOTH es el backend, y no la UI, para que no
+/// existan dos versiones de la misma regla.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CaptureSnapshot {
+    pub mic: CaptureStatus,
+    pub system: CaptureStatus,
+    pub indicator: &'static str,
+}
+
+fn indicator(mic: bool, system: bool) -> &'static str {
+    match (mic, system) {
+        (true, true) => "BOTH",
+        (true, false) => "MIC",
+        (false, true) => "SYSTEM AUDIO",
+        (false, false) => "OFF",
+    }
 }
 
 #[derive(Debug, Clone, Copy, serde::Serialize)]

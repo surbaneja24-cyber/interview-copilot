@@ -1,0 +1,38 @@
+# Configuracion de compilacion propia de este repositorio.
+#
+# Vive en la raiz y no en src-tauri/ a proposito: cargo busca este fichero desde el
+# directorio actual hacia arriba, y los comandos del proyecto se lanzan desde los dos
+# sitios (`npm run lint:rust` desde la raiz, `cargo test` desde src-tauri). En src-tauri/
+# solo lo veria uno de los dos, y el otro fallaria con un error que no se parece en nada
+# a la causa: bindgen diciendo que no encuentra libclang.
+#
+# Las dos variables existen por la misma razon: al construir el proyecto se compila
+# whisper.cpp de verdad, y en Windows faltan dos piezas del camino habitual. Las dos se
+# declaran con `force` a false (el defecto), asi que si ya las tienes definidas en tu
+# entorno, las tuyas mandan.
+
+[env]
+# CMake esta instalado pero no en el PATH, y el crate `cmake` lo busca ahi. Esto se lo dice
+# sin tocar el PATH del sistema.
+#
+# Comillas simples a proposito: en TOML las dobles interpretan `\C` como escape y el
+# fichero no llega ni a parsearse.
+CMAKE = 'C:\Program Files\CMake\bin\cmake.exe'
+
+# bindgen —que usa whisper-rs para generar sus bindings— necesita libclang.
+#
+# Aqui hay una trampa que costo una compilacion entera: whisper-rs trae bindings
+# pregenerados y una variable, WHISPER_DONT_GENERATE_BINDINGS, para usarlos sin bindgen.
+# **En Windows no sirven**: los pregenerados son de Linux y hablan de `_IO_FILE` y
+# `_G_fpos64_t` con los tamanos de glibc, asi que el crate compila el C++ entero y luego
+# revienta comprobando tamanos de structs que en MSVC no existen.
+#
+# Asi que hace falta libclang de verdad. LLVM entero pide permisos de administrador para
+# instalarse; el mismo `libclang.dll` viene dentro del paquete `libclang` de PyPI, que se
+# baja y se extrae sin instalar nada en el sistema:
+#
+#   python -m pip download libclang --only-binary :all: --no-deps -d wheels
+#   (dentro del .whl, en clang/native/libclang.dll)
+#
+# Ver docs/SETUP.md.
+LIBCLANG_PATH = 'C:\Users\Surba\AppData\Local\interview-copilot\libclang'

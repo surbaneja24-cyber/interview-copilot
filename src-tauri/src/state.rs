@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use crate::audio::{vad, CaptureStatus, Recorder, Source};
+use crate::stt::{self, TranscriptState, Transcriber};
 use crate::embedding::LocalEmbeddingProvider;
 use crate::error::{AppError, AppResult};
 use crate::llm::settings::SETTINGS_KEY;
@@ -35,6 +36,10 @@ pub struct AppState {
     /// distintos y se capturan a la vez, que es justo lo que hace falta en una entrevista.
     mic: Mutex<Option<Recorder>>,
     system: Mutex<Option<Recorder>>,
+    /// El hilo que transcribe los turnos cerrados. Se crea con la primera captura que
+    /// tenga modelo, y el modelo de whisper no se carga hasta el primer turno: son ~200 MB
+    /// y esta maquina los necesita para otras cosas mientras nadie hable.
+    transcriber: Mutex<Option<Transcriber>>,
 }
 
 impl AppState {
@@ -46,6 +51,7 @@ impl AppState {
             llm: Mutex::new(None),
             mic: Mutex::new(None),
             system: Mutex::new(None),
+            transcriber: Mutex::new(None),
         }
     }
 
@@ -104,9 +110,11 @@ impl AppState {
         slot.take();
         // Si el modelo esta descargado, la captura arranca con deteccion de voz; si no,
         // arranca sin ella. Obligar a descargar 2 MB antes de poder ver el medidor seria
-        // poner una puerta donde no hace falta.
+        // poner una puerta donde no hace falta. Lo mismo con la transcripcion: sin modelo
+        // de whisper hay VAD y no hay texto.
         let model = self.vad_model();
-        let recorder = Recorder::start(source, device, model)?;
+        let turns = self.turn_sink()?;
+        let recorder = Recorder::start(source, device, model, turns)?;
         let status = recorder.status();
         *slot = Some(recorder);
 
@@ -115,6 +123,68 @@ impl AppState {
 
     pub fn models_dir(&self) -> &std::path::Path {
         &self.models_dir
+    }
+
+    /// Devuelve por donde mandar los turnos a transcribir, creando el hilo si hace falta.
+    ///
+    /// Sin modelo de whisper descargado devuelve `None`, y entonces la captura funciona
+    /// igual pero sin texto: eso es mejor que negarse a capturar.
+    fn turn_sink(&self) -> AppResult<Option<crate::stt::transcriber::TurnSink>> {
+        let Some((path, id)) = self.stt_model() else {
+            return Ok(None);
+        };
+
+        let mut slot = self
+            .transcriber
+            .lock()
+            .map_err(|err| AppError::Poisoned(err.to_string()))?;
+
+        if slot.is_none() {
+            *slot = Some(Transcriber::start(path, id)?);
+        }
+
+        Ok(slot.as_ref().and_then(Transcriber::sender))
+    }
+
+    /// El modelo de whisper descargado que toque usar: el que recomienda el hardware si
+    /// esta, y si no cualquiera que haya, de mayor a menor.
+    fn stt_model(&self) -> Option<(PathBuf, &'static str)> {
+        let recomendado = crate::hardware::detect().recommendation.stt_model;
+
+        let preferido = stt::model_by_id(recomendado)
+            .filter(|model| model.is_downloaded(&self.models_dir));
+
+        preferido
+            .or_else(|| {
+                stt::MODELS
+                    .iter()
+                    .rev()
+                    .find(|model| model.is_downloaded(&self.models_dir))
+            })
+            .map(|model| (model.path(&self.models_dir), model.id))
+    }
+
+    /// Lo transcrito hasta ahora. Vacio y sin modelo si nadie ha capturado todavia.
+    pub fn transcript(&self) -> Option<TranscriptState> {
+        self.transcriber
+            .lock()
+            .ok()
+            .and_then(|slot| slot.as_ref().map(Transcriber::state))
+    }
+
+    /// Suelta el modelo de whisper. Son ~200 MB que el LLM necesita mas que nadie cuando
+    /// la entrevista ha terminado.
+    pub fn release_transcriber(&self) -> AppResult<()> {
+        let mut slot = self
+            .transcriber
+            .lock()
+            .map_err(|err| AppError::Poisoned(err.to_string()))?;
+
+        if slot.take().is_some() {
+            log::info!("modelo de transcripcion liberado");
+        }
+
+        Ok(())
     }
 
     /// Ruta del modelo del VAD si esta descargado.

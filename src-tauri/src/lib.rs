@@ -1,4 +1,5 @@
 mod audio;
+mod download;
 pub mod embedding;
 mod error;
 mod hardware;
@@ -8,6 +9,7 @@ mod rag;
 mod secrets;
 mod state;
 mod storage;
+mod stt;
 
 use std::path::PathBuf;
 
@@ -23,6 +25,7 @@ use rag::indexer::{IndexReport, Indexer};
 use rag::retriever::{Retrieval, Retriever, DEFAULT_TOP_K};
 use rag::{extract, vector_store};
 use state::{AppState, CaptureSnapshot, ModelStatus};
+use stt::{SttModel, TranscriptState};
 use storage::{Db, Document, DocumentKind, NewDocument, NewProject, Project};
 
 const DB_FILE: &str = "interview-copilot.db";
@@ -207,6 +210,55 @@ fn capture_status(state: tauri::State<'_, AppState>) -> CaptureSnapshot {
     state.capture_status()
 }
 
+/// Modelos de transcripcion, con cual esta descargado y cual recomienda el hardware.
+#[tauri::command]
+fn stt_models(state: tauri::State<'_, AppState>) -> Vec<SttModelStatus> {
+    let recomendado = hardware::detect().recommendation.stt_model;
+
+    stt::MODELS
+        .iter()
+        .map(|model| SttModelStatus {
+            model: *model,
+            downloaded: model.is_downloaded(state.models_dir()),
+            recommended: model.id == recomendado,
+        })
+        .collect()
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SttModelStatus {
+    #[serde(flatten)]
+    model: SttModel,
+    downloaded: bool,
+    /// El que recomienda el detector de hardware para este equipo (§4).
+    recommended: bool,
+}
+
+/// Descarga un modelo de transcripcion. Son entre 75 y 490 MB, asi que no se descarga
+/// nada sin que el usuario lo pida (§2).
+#[tauri::command]
+async fn download_stt_model(state: tauri::State<'_, AppState>, id: String) -> AppResult<()> {
+    let model = stt::model_by_id(&id)
+        .ok_or_else(|| AppError::Invalid(format!("no existe el modelo {id}")))?;
+
+    model.ensure(state.models_dir()).await?;
+    Ok(())
+}
+
+/// Lo transcrito en esta sesion. `None` mientras no haya arrancado ninguna captura con
+/// modelo de transcripcion.
+#[tauri::command]
+fn transcript(state: tauri::State<'_, AppState>) -> Option<TranscriptState> {
+    state.transcript()
+}
+
+/// Suelta el modelo de whisper (~200 MB).
+#[tauri::command]
+fn release_transcriber(state: tauri::State<'_, AppState>) -> AppResult<()> {
+    state.release_transcriber()
+}
+
 // ---------------------------------------------------------------------------
 // LLM (§18, §19, §31)
 // ---------------------------------------------------------------------------
@@ -341,6 +393,10 @@ pub fn run() {
             capture_status,
             vad_model_present,
             download_vad_model,
+            stt_models,
+            download_stt_model,
+            transcript,
+            release_transcriber,
             llm_settings,
             save_llm_settings,
             llm_providers,

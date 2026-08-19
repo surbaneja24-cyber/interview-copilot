@@ -174,11 +174,14 @@ compilar nada de C++— y whisper.cpp el último, que es el que exige compilar c
 - [x] Medidor de nivel: RMS y pico retenido, con su barra en Ajustes (§11)
 - [x] Loopback del sistema (WASAPI) e indicador MIC / SYSTEM AUDIO / BOTH
 - [x] VAD con detección de fin de turno (Silero por ONNX Runtime)
-- [ ] `LocalWhisperProvider` con whisper.cpp, descarga de modelos gestionada por la app
-- [ ] Transcripción incremental sobre ventanas solapadas
-- [ ] Medición de latencia por etapa, visible en un panel de diagnóstico
+- [x] `LocalWhisperProvider` con whisper.cpp, descarga de modelos gestionada por la app
+- [ ] Transcripción incremental sobre ventanas solapadas (hoy es por turnos completos)
+- [x] Medición de latencia por etapa: cada turno enseña su audio y lo que tardó whisper
 
-**Hito:** hablo y el texto aparece en pantalla en tiempo real.
+**Hito conseguido.** Hablo y el texto aparece: verificado sin nadie delante, con el
+sintetizador de voz de Windows hablando por los altavoces, el loopback capturando, el VAD
+cerrando el turno y whisper transcribiendo *"Cuéntame un proyecto complicado en el que hayas
+trabajado"* palabra por palabra.
 
 ### El VAD (2026-08-19)
 
@@ -244,6 +247,36 @@ de hacer falta o deja de funcionar, se sabrá.
 **Lo que el loopback no arregla:** con altavoces en vez de auriculares, la voz del usuario
 vuelve por la salida y la separación por fuente deja de separar. Es una limitación real y la
 UI la dice en vez de fingir que no existe.
+
+### whisper.cpp, y la respuesta a la pregunta que llevaba abierta desde la Fase 0
+
+| Medida | `whisper-base`, 3 hilos |
+|---|---|
+| Cargar el modelo | 0,55 s |
+| Transcribir 3,7 s de voz | 2,0 s |
+| Voz → loopback → VAD → texto | 1,9 s tras cerrarse el turno |
+
+**0,54× tiempo real, y el texto correcto palabra por palabra.** La duda de `ARCHITECTURE.md`
+§0 era si esta máquina daría para transcribir en vivo; da, y con margen. Lo que sigue sin
+dar es el LLM local, que es otra cosa.
+
+Compilar whisper.cpp la primera vez: ~6 minutos de C++ más 1-2 de Rust, con 3 trabajos.
+
+Dos trampas de Windows que están en `SETUP.md` para no repetirlas:
+
+- **Los bindings pregenerados de `whisper-rs` son de Linux.** La variable
+  `WHISPER_DONT_GENERATE_BINDINGS` promete evitar bindgen y en Windows lleva a compilar los
+  seis minutos de C++ para reventar después comprobando el tamaño de `_IO_FILE`. Hace falta
+  libclang de verdad, y se saca del paquete `libclang` de PyPI sin instalar LLVM ni pedir
+  permisos de administrador.
+- **`.cargo/config.toml` va en la raíz, no en `src-tauri/`.** Cargo lo busca desde el
+  directorio actual hacia arriba, y los comandos se lanzan desde los dos sitios. En
+  `src-tauri/` solo lo ve la mitad, y la otra mitad falla con un error que no se parece a la
+  causa.
+
+Los tres modelos de whisper se descargan desde la aplicación con su SHA-256 comprobado. Las
+huellas son las que publica el repositorio de modelos; la de `base` está además comprobada a
+mano contra el fichero descargado, y eso es lo que da derecho a fiarse de las otras dos.
 
 ## Fase 5 — Entrevista en vivo (cierre del MVP 1)
 

@@ -256,3 +256,35 @@ export interface CaptureSnapshot {
   /** El indicador de §11, resuelto en el backend: MIC / SYSTEM AUDIO / BOTH / OFF. */
   readonly indicator: string;
 }
+
+// ---------------------------------------------------------------------------
+// Transcripción (fase 4)
+// ---------------------------------------------------------------------------
+
+export interface SttModelStatus {
+  /** El identificador que usa el detector de hardware al recomendar. */
+  readonly id: string;
+  readonly file: string;
+  readonly sha256: string;
+  readonly bytes: number;
+  readonly downloaded: boolean;
+  /** El que el detector de hardware recomienda para este equipo. */
+  readonly recommended: boolean;
+}
+
+export interface TranscriptEntry {
+  readonly source: Source;
+  readonly text: string;
+  readonly audioMs: number;
+  /** Lo que tardó whisper. Es el número que decide si el modo LOCAL es usable (§10). */
+  readonly tookMs: number;
+}
+
+export interface TranscriptState {
+  readonly entries: readonly TranscriptEntry[];
+  /** Turnos esperando turno de whisper. Si crece, el equipo no da abasto. */
+  readonly pending: number;
+  readonly model: string;
+  readonly loaded: boolean;
+  readonly error: string | null;
+}

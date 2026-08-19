@@ -27,6 +27,7 @@ use ringbuf::traits::{Consumer, Observer, Split};
 use ringbuf::{HeapCons, HeapProd, HeapRb};
 
 use crate::error::{AppError, AppResult};
+use crate::stt::transcriber::TurnSink;
 
 /// Muestras por ventana. La v5 de Silero **exige** 512 a 16 kHz; no es una preferencia.
 pub const FRAME_SAMPLES: usize = 512;
@@ -570,6 +571,17 @@ mod tests {
 // El VAD en vivo, colgado de una captura
 // ---------------------------------------------------------------------------
 
+/// Ventanas de audio que se guardan **antes** de que el turno se de por empezado.
+///
+/// Abrir turno exige dos ventanas con voz, y para cuando se abre, esas dos ya han pasado.
+/// Sin este colchon, la transcripcion empezaria por la mitad de la primera silaba. Ocho
+/// ventanas son 256 ms, de sobra y practicamente gratis.
+const PREROLL_FRAMES: usize = 8;
+
+/// Tope de audio por turno. whisper trabaja con ventanas de 30 s; mas alla hay que trocear,
+/// y eso llega con la transcripcion incremental.
+const MAX_TURN_SAMPLES: usize = 30 * 16_000;
+
 /// Segundos de audio que caben en la cola entre la tarjeta y el VAD.
 ///
 /// Dos segundos es holgado: el VAD consume ventanas de 32 ms y solo se retrasaria si el
@@ -634,7 +646,11 @@ pub struct LiveVad {
 impl LiveVad {
     /// Crea la cola y arranca el hilo. Devuelve el extremo de escritura, que tiene que
     /// acabar dentro de la llamada de retorno de audio.
-    pub fn start(model: &Path) -> AppResult<(Self, SampleSink)> {
+    pub fn start(
+        model: &Path,
+        source: crate::audio::Source,
+        turns: Option<TurnSink>,
+    ) -> AppResult<(Self, SampleSink)> {
         // Se carga aqui y no en el hilo para que un modelo que falta o esta corrupto sea
         // un error de "arrancar la captura" y no un hilo que muere en silencio.
         let mut tracker = VoiceTracker::new(model)?;
@@ -652,6 +668,11 @@ impl LiveVad {
             .name("vad".into())
             .spawn(move || {
                 let mut frame = [0.0f32; FRAME_SAMPLES];
+                // Audio del turno en curso, y el colchon de lo anterior por si empieza uno.
+                let mut turn_audio: Vec<f32> = Vec::new();
+                let mut preroll: std::collections::VecDeque<[f32; FRAME_SAMPLES]> =
+                    std::collections::VecDeque::with_capacity(PREROLL_FRAMES);
+                let mut collecting = false;
 
                 while !thread_stopping.load(Ordering::Relaxed) {
                     if consumer.occupied_len() < FRAME_SAMPLES {
@@ -671,6 +692,44 @@ impl LiveVad {
                             break;
                         }
                     };
+
+                    // El audio del turno se guarda aqui, no en el hilo de la tarjeta: este
+                    // ya tiene las ventanas alineadas y remuestreadas.
+                    match event {
+                        Event::SpeechStarted => {
+                            turn_audio.clear();
+                            for anterior in &preroll {
+                                turn_audio.extend_from_slice(anterior);
+                            }
+                            turn_audio.extend_from_slice(&frame);
+                            collecting = true;
+                        }
+                        Event::TurnEnded { .. } => {
+                            collecting = false;
+                            if let Some(sink) = turns.as_ref() {
+                                sink.submit(source, std::mem::take(&mut turn_audio));
+                            } else {
+                                turn_audio.clear();
+                            }
+                        }
+                        Event::Nothing => {
+                            if collecting {
+                                if turn_audio.len() + FRAME_SAMPLES <= MAX_TURN_SAMPLES {
+                                    turn_audio.extend_from_slice(&frame);
+                                } else {
+                                    // Un turno de mas de 30 s no cabe en una pasada de
+                                    // whisper. Se queda lo que cabe y se dice en el log,
+                                    // en vez de devolver media frase como si fuera entera.
+                                    log::warn!("turno de mas de 30 s: se recorta");
+                                }
+                            }
+                        }
+                    }
+
+                    preroll.push_back(frame);
+                    if preroll.len() > PREROLL_FRAMES {
+                        preroll.pop_front();
+                    }
 
                     let peak = frame.iter().fold(0.0f32, |max, s| max.max(s.abs()));
                     if let Ok(mut state) = thread_shared.lock() {

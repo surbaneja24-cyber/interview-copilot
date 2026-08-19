@@ -73,10 +73,49 @@ $env:CARGO_BUILD_JOBS = "2"
 
 Y cierra el navegador y VS Code mientras compila.
 
+## libclang: lo que hace falta para compilar whisper.cpp
+
+Desde la Fase 4 el proyecto compila **whisper.cpp de verdad** al construir, y eso añade dos
+requisitos que en este equipo no estaban en el camino habitual. Los dos se resuelven en
+`.cargo/config.toml`, en la raíz del repositorio, sin tocar el PATH del sistema:
+
+- **CMake**, que está instalado pero no en el PATH. La variable `CMAKE` apunta al ejecutable.
+- **libclang**, que necesita bindgen para generar los enlaces de `whisper-rs`.
+
+Sobre libclang hay una trampa que cuesta una compilación entera de descubrir: `whisper-rs`
+trae bindings pregenerados y una variable, `WHISPER_DONT_GENERATE_BINDINGS`, que promete
+evitar bindgen. **En Windows no sirve**: los pregenerados son de Linux, hablan de `_IO_FILE`
+y `_G_fpos64_t` con los tamaños de glibc, y el build compila los ~6 minutos de C++ antes de
+reventar comprobando tamaños de structs que en MSVC no existen.
+
+Así que hace falta libclang de verdad. LLVM entero pide permisos de administrador; el mismo
+`libclang.dll` viaja dentro del paquete `libclang` de PyPI y se extrae sin instalar nada:
+
+```
+python -m pip download libclang --only-binary :all: --no-deps -d wheels
+```
+
+Dentro del `.whl` está en `clang/native/libclang.dll`. Se copia a una carpeta estable y esa
+carpeta es la que apunta `LIBCLANG_PATH`. Si prefieres LLVM completo, instálalo y borra esa
+línea del config: `force` está a false, así que tu entorno manda.
+
+La primera compilación con whisper.cpp tarda unos 6 minutos de C++ más 1-2 de Rust en esta
+máquina. Las siguientes reutilizan las bibliotecas ya compiladas.
+
 ## Modelos locales
 
-La app descarga sus propios modelos de STT y embeddings a `%APPDATA%/interview-copilot/models`.
-No hay que instalarlos a mano.
+La app descarga sus propios modelos de STT, VAD y embeddings a
+`%APPDATA%/dev.urbaneja.interviewcopilot/models`, y solo cuando se le pide desde la
+interfaz: §2 del spec dice que la aplicación no depende de la red, así que no se baja nada
+al arrancar. Cada descarga comprueba el SHA-256 antes de dar el fichero por bueno.
+
+| Modelo | Tamaño | Para qué |
+|---|---|---|
+| `silero_vad.onnx` | 2,2 MB | Detectar voz y fin de turno |
+| `ggml-tiny.bin` / `ggml-base.bin` / `ggml-small.bin` | 75 / 148 / 488 MB | Transcribir |
+| `multilingual-e5-base` | ~1 GB | Embeddings del RAG |
+
+El detector de hardware recomienda cuál de los tres de whisper usar (§4).
 
 Para el LLM local (opcional en esta máquina, ver `ARCHITECTURE.md` §0), hace falta un
 servidor compatible con la API de OpenAI corriendo aparte:

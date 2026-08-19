@@ -1,8 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { captureStatus, downloadVadModel, stopCapture, vadModelPresent } from '@/ipc/commands';
+import {
+  captureStatus,
+  downloadVadModel,
+  stopCapture,
+  transcript as fetchTranscript,
+  vadModelPresent,
+} from '@/ipc/commands';
 import { describeError, useAsync } from '@/hooks/useAsync';
 import { SourcePanel } from '@/components/audio/SourcePanel';
-import type { CaptureSnapshot } from '@/ipc/types';
+import { SttModelPicker } from '@/components/audio/SttModelPicker';
+import { TranscriptPanel } from '@/components/audio/TranscriptPanel';
+import type { CaptureSnapshot, TranscriptState } from '@/ipc/types';
 
 /** Cada cuánto se pregunta el nivel. Una sola consulta trae las dos fuentes. */
 const POLL_MS = 100;
@@ -16,6 +24,7 @@ const POLL_MS = 100;
  */
 export function AudioCard() {
   const [snapshot, setSnapshot] = useState<CaptureSnapshot | null>(null);
+  const [transcript, setTranscript] = useState<TranscriptState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
   const timer = useRef<number | null>(null);
@@ -29,6 +38,15 @@ export function AudioCard() {
       })
       .catch((cause: unknown) => {
         setError(describeError(cause));
+      });
+
+    // La transcripción se pide en la misma vuelta: whisper tarda segundos, así que un
+    // temporizador propio más rápido no traería nada nuevo.
+    fetchTranscript()
+      .then(setTranscript)
+      .catch(() => {
+        // Un fallo aquí no puede tapar el medidor, que es lo que de verdad importa
+        // mientras se elige micrófono.
       });
   }, []);
 
@@ -112,6 +130,17 @@ export function AudioCard() {
           cuando tú lo pides: la app no sale a la red por su cuenta.
         </p>
       )}
+
+      <div className="source">
+        <h3>Transcripción</h3>
+        <p className="muted small">
+          Cada turno se transcribe en tu equipo cuando termina, no mientras se habla: hacen
+          falta 700 ms de silencio para dar la pregunta por acabada. El modelo se carga con
+          el primer turno, no antes.
+        </p>
+        <TranscriptPanel transcript={transcript} />
+        <SttModelPicker />
+      </div>
 
       {error !== null && <p className="error">{error}</p>}
     </section>

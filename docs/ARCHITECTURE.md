@@ -327,6 +327,46 @@ barato que mandar el triple de datos y tirarlos al otro lado. Si la cola se llen
 descartan las muestras nuevas **y se cuentan**, porque un detector que no vio parte del
 audio no puede presentarse como si lo hubiera visto todo.
 
+## 4.3 Transcripción: whisper.cpp, y lo que cuesta de verdad en esta máquina
+
+whisper.cpp compilado dentro del binario, vía `whisper-rs`. Es la pieza que decidía si el
+modo LOCAL sirve para una entrevista o solo para practicar, y por primera vez hay números:
+
+| Medida | Valor (2026-08-19, `whisper-base`) |
+|---|---|
+| Cargar el modelo | 0,55 s |
+| Transcribir 3,7 s de voz | 2,0 s |
+| Cadena entera: voz → loopback → VAD → texto | 1,9 s tras cerrarse el turno |
+
+Es **0,54× tiempo real** con el modelo `base` en 3 hilos, y el texto salió palabra por
+palabra correcto. Muy por debajo de lo que se temía en §0, donde la preocupación era si
+esta máquina daría para transcribir en vivo. Da.
+
+Tres decisiones de diseño, y ninguna es de estilo:
+
+- **La transcripción va por turnos, no en continuo.** El VAD cierra un turno y ese audio se
+  manda a transcribir. Es lo que permite que el texto salga completo y con puntuación en vez
+  de a trozos, y encaja con lo que hace falta después: la pregunta entera es lo que dispara
+  la recuperación y la respuesta (§10).
+- **Va en su propio hilo, detrás de un canal.** Transcribir tarda segundos; si el hilo del
+  VAD esperase, la siguiente pregunta se perdería entera. Si se acumulan turnos, se cuentan
+  y se enseñan: una cola que crece significa que el equipo no da abasto y hay que bajar de
+  modelo.
+- **whisper se queda con un núcleo menos de los que hay.** Con los cuatro, la captura de
+  audio da cortes, y el audio perdido no se recupera después; el texto sí puede tardar.
+
+Hay un colchón de 256 ms antes de que el turno se dé por empezado (`PREROLL_FRAMES`): abrir
+turno exige dos ventanas con voz, y para cuando se abre esas dos ya han pasado. Sin él, la
+transcripción empezaría a mitad de la primera sílaba.
+
+**Lo que todavía no hace:** trocear turnos de más de 30 s, que es la ventana de whisper. Hoy
+se recorta y se avisa en el log; la solución es la transcripción incremental sobre ventanas
+solapadas, que es lo que además bajará la latencia percibida.
+
+El idioma está fijado a español hasta que exista el selector de §14. Dejar que el modelo lo
+detecte cuesta una pasada más y acierta peor con frases cortas, que es exactamente lo que
+son los turnos de una entrevista.
+
 ## 5. La regla de no inventar experiencia (§6)
 
 Es un requisito de producto, así que se implementa como control explícito y no como una frase en el prompt. Lo que sigue documenta **un intento fallido y la solución que lo sustituye**, porque el intento fallido es justo el que la intuición vuelve a sugerir.

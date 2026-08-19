@@ -512,3 +512,29 @@ code {
   color: var(--text);
   font-weight: 600;
 }
+
+/* La transcripcion, turno a turno. */
+.transcript {
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.transcript li {
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.transcript li:last-child {
+  border-bottom: none;
+}
+
+.transcript p {
+  margin: 0.2rem 0 0;
+}
+
+.transcript__meta {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}

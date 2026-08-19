@@ -16,6 +16,8 @@ import type {
   ProviderKind,
   Retrieval,
   Source,
+  SttModelStatus,
+  TranscriptState,
 } from '@/ipc/types';
 
 /**
@@ -171,4 +173,24 @@ export function vadModelPresent(): Promise<boolean> {
 /** Descarga el modelo del VAD (2,2 MB). No se descarga solo: §2 pide no depender de la red. */
 export async function downloadVadModel(): Promise<void> {
   await invoke('download_vad_model');
+}
+
+/** Modelos de transcripción, con cuál está descargado y cuál recomienda el hardware. */
+export function sttModels(): Promise<readonly SttModelStatus[]> {
+  return invoke<SttModelStatus[]>('stt_models');
+}
+
+/** Entre 75 y 490 MB. Solo cuando el usuario lo pide (§2). */
+export async function downloadSttModel(id: string): Promise<void> {
+  await invoke('download_stt_model', { id });
+}
+
+/** `null` mientras no haya arrancado ninguna captura con modelo de transcripción. */
+export function transcript(): Promise<TranscriptState | null> {
+  return invoke<TranscriptState | null>('transcript');
+}
+
+/** Suelta el modelo de whisper (~200 MB). */
+export async function releaseTranscriber(): Promise<void> {
+  await invoke('release_transcriber');
 }

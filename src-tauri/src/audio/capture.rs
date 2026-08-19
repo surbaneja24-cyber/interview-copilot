@@ -41,6 +41,7 @@ use ringbuf::traits::Producer;
 use crate::audio::level::{Level, Meter};
 use crate::audio::resample;
 use crate::audio::vad::{LiveVad, SampleSink, VadState};
+use crate::stt::transcriber::TurnSink;
 use crate::error::{AppError, AppResult};
 
 /// De donde se captura.
@@ -211,6 +212,7 @@ impl Recorder {
         source: Source,
         requested: Option<String>,
         vad_model: Option<PathBuf>,
+        turns: Option<TurnSink>,
     ) -> AppResult<Self> {
         let meter = Arc::new(Meter::new());
         let failure: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
@@ -219,7 +221,7 @@ impl Recorder {
         // pulsar "Escuchar" y no un hilo que muere sin que nadie se entere.
         let (vad, sink) = match vad_model {
             Some(model) => {
-                let (live, queue) = LiveVad::start(&model)?;
+                let (live, queue) = LiveVad::start(&model, source, turns)?;
                 let dropped = live.dropped_counter();
                 (Some(live), Some((queue, dropped)))
             }
@@ -556,7 +558,8 @@ mod tests {
     #[test]
     #[ignore = "toma el micrófono del equipo"]
     fn captura_medio_segundo_y_mide() {
-        let recorder = Recorder::start(Source::Mic, None, None).expect("arrancar la captura");
+        let recorder =
+            Recorder::start(Source::Mic, None, None, None).expect("arrancar la captura");
         std::thread::sleep(std::time::Duration::from_millis(500));
 
         let status = recorder.status();
@@ -595,7 +598,7 @@ mod tests {
             panic!("define INTERVIEW_COPILOT_VAD con la ruta de silero_vad.onnx");
         };
 
-        let recorder = Recorder::start(Source::System, None, Some(PathBuf::from(model)))
+        let recorder = Recorder::start(Source::System, None, Some(PathBuf::from(model)), None)
             .expect("abrir el loopback con VAD");
 
         // Una frase larga: el detector necesita al menos dos ventanas de 32 ms con voz
@@ -644,6 +647,73 @@ mod tests {
         );
     }
 
+    /// **El hito de la fase 4, comprobado sin nadie delante.** El sintetizador de voz de
+    /// Windows hace una pregunta de entrevista, el loopback la captura, el VAD cierra el
+    /// turno y whisper lo transcribe. Si esto pasa, la cadena audio → texto funciona
+    /// entera.
+    ///
+    /// `INTERVIEW_COPILOT_VAD=<onnx> INTERVIEW_COPILOT_WHISPER=<ggml> cargo test --lib -- --ignored --nocapture de_la_voz_al_texto`
+    #[test]
+    #[ignore = "habla por los altavoces y carga el modelo de whisper"]
+    fn de_la_voz_al_texto() {
+        let vad_model = std::env::var("INTERVIEW_COPILOT_VAD").expect("INTERVIEW_COPILOT_VAD");
+        let whisper_model =
+            std::env::var("INTERVIEW_COPILOT_WHISPER").expect("INTERVIEW_COPILOT_WHISPER");
+
+        let transcriber =
+            crate::stt::Transcriber::start(PathBuf::from(whisper_model), "whisper-base")
+                .expect("arrancar la transcripcion");
+
+        let _recorder = Recorder::start(
+            Source::System,
+            None,
+            Some(PathBuf::from(vad_model)),
+            transcriber.sender(),
+        )
+        .expect("abrir el loopback con VAD y transcripcion");
+
+        let frase = "Cuentame un proyecto complicado en el que hayas trabajado";
+        let hablado = std::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                &format!(
+                    "Add-Type -AssemblyName System.Speech;                      $voz = New-Object System.Speech.Synthesis.SpeechSynthesizer;                      $voz.Speak('{frase}')"
+                ),
+            ])
+            .status();
+        println!("sintetizador: {hablado:?}");
+
+        // 700 ms cierran el turno, mas lo que tarde whisper en cargar y transcribir. Se
+        // espera comprobando en vez de dormir a ciegas: si tarda menos, el test acaba antes.
+        let limite = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        let texto = loop {
+            let estado = transcriber.state();
+            if let Some(entrada) = estado.entries.first() {
+                println!(
+                    "{} s de audio transcritos en {} ms: {}",
+                    entrada.audio_ms / 1000,
+                    entrada.took_ms,
+                    entrada.text
+                );
+                break entrada.text.to_lowercase();
+            }
+            assert_eq!(estado.error, None, "la transcripcion fallo");
+            assert!(
+                std::time::Instant::now() < limite,
+                "un minuto sin transcribir nada"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        };
+
+        // No se exige la frase entera: un reconocedor puede equivocarse en una palabra y
+        // seguir siendo util. Se exige que haya reconocido de que se hablaba.
+        assert!(
+            texto.contains("proyecto") || texto.contains("complicado"),
+            "transcribio algo que no se parece a lo que se dijo: {texto}"
+        );
+    }
+
     /// El loopback, y de paso la pregunta que no se puede contestar razonando: **¿entrega
     /// datos WASAPI cuando no suena nada?** Si no lo hace, el medidor se queda congelado y
     /// hay que mantener abierto un flujo mudo de reproduccion para que siga el reloj.
@@ -654,7 +724,8 @@ mod tests {
     #[test]
     #[ignore = "reproduce un sonido y toma la salida de audio"]
     fn el_loopback_captura_lo_que_suena() {
-        let recorder = Recorder::start(Source::System, None, None).expect("abrir el loopback");
+        let recorder =
+            Recorder::start(Source::System, None, None, None).expect("abrir el loopback");
         println!("dispositivo: {}", recorder.device);
 
         std::thread::sleep(std::time::Duration::from_secs(1));

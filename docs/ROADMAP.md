@@ -173,12 +173,33 @@ compilar nada de C++— y whisper.cpp el último, que es el que exige compilar c
 - [x] Captura de micrófono (`cpal`, WASAPI) en su propio hilo
 - [x] Medidor de nivel: RMS y pico retenido, con su barra en Ajustes (§11)
 - [x] Loopback del sistema (WASAPI) e indicador MIC / SYSTEM AUDIO / BOTH
-- [ ] VAD con detección de fin de turno
+- [x] VAD con detección de fin de turno (Silero por ONNX Runtime)
 - [ ] `LocalWhisperProvider` con whisper.cpp, descarga de modelos gestionada por la app
 - [ ] Transcripción incremental sobre ventanas solapadas
 - [ ] Medición de latencia por etapa, visible en un panel de diagnóstico
 
 **Hito:** hablo y el texto aparece en pantalla en tiempo real.
+
+### El VAD (2026-08-19)
+
+Silero v5 sobre el ONNX Runtime que ya estaba en el árbol por fastembed. El modelo son
+2,2 MB y se descarga **cuando el usuario lo pide**, comprobando su SHA-256: §2 dice que la
+app no depende de la red, y descargar al arrancar sería justo eso. Sin modelo, la captura y
+el medidor funcionan igual; lo que no hay es detección de turnos.
+
+Lo que costó la tarde está en `ARCHITECTURE.md` §4.2 y se resume en que la v5 no recibe 512
+muestras sino 576 —512 más 64 de contexto—, que sin el contexto no da error sino
+probabilidades bajas, y que con un segundo de silencio delante bajaban de 0,54 a 0,10.
+Medido comparando el mismo audio por dos caminos, no razonado.
+
+Verificado de punta a punta y solo: el sintetizador de voz de Windows habla, el loopback lo
+captura, se remuestrea y Silero cierra un turno de 2.784 ms con probabilidad 1,000 y cero
+muestras perdidas. La misma frase leída de un fichero da la misma duración.
+
+**Sin calibrar, y anotado como tal:** el umbral de 0,5, las dos ventanas para abrir y los
+700 ms para cerrar. Son los de referencia de Silero o razonados sobre cómo habla la gente.
+Calibrarlos exige grabaciones de entrevistas reales, y por eso la UI enseña la probabilidad
+y su máximo en vez de un sí o un no.
 
 ### Lo que ya funciona, medido el 2026-08-19
 

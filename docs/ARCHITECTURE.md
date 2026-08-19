@@ -265,6 +265,68 @@ El suelo del medidor es −100 dB y no −∞ por un motivo que no es estético:
 infinito, `serde_json` lo serializa como `null`, y al otro lado hay un `number`. Hay un
 test que lo fija.
 
+## 4.2 El VAD, y las 64 muestras que costaron una tarde
+
+El disparador de toda la entrevista es saber cuándo el entrevistador ha terminado de
+preguntar. Un umbral de decibelios no sirve, y no es cuestión de afinarlo: el ruido de una
+sala lo cruza y una pausa para pensar no. Silero mira la forma de la señal, no su energía.
+
+El módulo está partido en dos a propósito. `Silero` habla con el modelo y solo se puede
+probar con el ONNX de verdad; `TurnDetector` decide, a partir de la probabilidad, cuándo
+empieza y acaba un turno, y es una máquina de estados que se prueba con números escritos a
+mano. La parte que puede equivocarse en silencio —confundir una pausa con el final de una
+pregunta— es la segunda, y es la que tiene tests.
+
+La histéresis es lo que hace que una pregunta con pausas siga siendo **una** pregunta: dos
+ventanas de 32 ms con voz abren turno, y hacen falta 700 ms de silencio para cerrarlo. Los
+tres números (0,5 de umbral, 2 ventanas, 700 ms) son los de referencia de Silero o razonados
+sobre cómo habla la gente, **no medidos con entrevistas reales**, y así está anotado en el
+código. Por eso la UI enseña la probabilidad y su máximo: son los números con los que
+calibrarlos el día que haya grabaciones de verdad.
+
+### El fallo que enseñó a no fiarse de que "funcione"
+
+La primera versión pasaba ventanas de 512 muestras al modelo. No daba ningún error —la
+entrada del ONNX es dinámica— y devolvía probabilidades plausibles. Con una frase hablada
+sin nada por delante daba 0,54, justo por encima del umbral: parecía funcionar y estaba mal.
+
+Con **un segundo de silencio delante**, la misma frase daba 0,10. Un segundo de silencio es
+exactamente lo que hay entre dos preguntas de una entrevista, así que en la app real el
+detector no habría detectado nada, y el síntoma habría sido "el VAD no va" sin nada a lo que
+agarrarse.
+
+La v5 de Silero no recibe 512 muestras: recibe **576**, las 512 de la ventana más 64 de
+contexto de la ventana anterior. Con el contexto puesto, esa misma frase da 0,98 con y sin
+silencio delante, y el turno se cierra limpio.
+
+Tres cosas que dejó por escrito ese rato:
+
+1. **Una probabilidad plausible no es una probabilidad correcta.** El 0,54 pasaba el umbral
+   y habría pasado una revisión a ojo.
+2. **El camino sospechoso hay que medirlo, no razonarlo.** Se llegó comparando el mismo
+   audio por dos caminos —fichero y captura en vivo— y viendo que daban 0,54 y 0,003.
+3. **Un arreglo puesto sobre un diagnóstico equivocado hace daño.** Antes de encontrarlo se
+   añadió una política de reiniciar el estado del modelo tras un rato de silencio; no
+   arreglaba nada y cada reinicio metía un transitorio que abría turnos que nadie había
+   hablado. Se quitó al arreglar la causa.
+
+El test que lo protege mide la misma frase con 0, 1 y 5 segundos de silencio delante, y
+exige más de 0,9 en las tres.
+
+### La cadena entera, probada sola
+
+Hay un test que hace hablar al sintetizador de voz de Windows, lo captura por el loopback,
+lo remuestrea a 16 kHz y comprueba que Silero ve un turno de la duración correcta. Es lo más
+cerca de una entrevista que se puede estar sin un entrevistador delante, y es automático.
+Detecta lo que los tests de cada pieza por separado no pueden: que el remuestreo esté
+desalineado, que la cola no se llene o que el VAD no vea el audio que sí está entrando.
+
+El audio va de la llamada de retorno al VAD por una cola sin bloqueos (`ringbuf`), y se
+remuestrea a 16 kHz mono antes de encolarlo: convertirlo una vez en el productor es más
+barato que mandar el triple de datos y tirarlos al otro lado. Si la cola se llena se
+descartan las muestras nuevas **y se cuentan**, porque un detector que no vio parte del
+audio no puede presentarse como si lo hubiera visto todo.
+
 ## 5. La regla de no inventar experiencia (§6)
 
 Es un requisito de producto, así que se implementa como control explícito y no como una frase en el prompt. Lo que sigue documenta **un intento fallido y la solución que lo sustituye**, porque el intento fallido es justo el que la intuición vuelve a sugerir.

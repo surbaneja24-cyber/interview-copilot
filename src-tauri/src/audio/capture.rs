@@ -30,12 +30,17 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
+use std::path::PathBuf;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{DeviceId, FromSample, Sample, SizedSample};
+use ringbuf::traits::Producer;
 
 use crate::audio::level::{Level, Meter};
+use crate::audio::resample;
+use crate::audio::vad::{LiveVad, SampleSink, VadState};
 use crate::error::{AppError, AppResult};
 
 /// De donde se captura.
@@ -90,6 +95,9 @@ pub struct CaptureStatus {
     /// Fallo posterior al arranque: el cable se fue, el dispositivo desaparecio. cpal lo
     /// avisa por una llamada aparte que nadie esta escuchando, asi que se guarda.
     pub error: Option<String>,
+    /// Estado del detector de voz, si hay modelo descargado. `None` significa que no se
+    /// esta detectando nada, que no es lo mismo que "no hay voz".
+    pub vad: Option<VadState>,
 }
 
 impl CaptureStatus {
@@ -103,6 +111,7 @@ impl CaptureStatus {
             level: Level::SILENT,
             frames: 0,
             error: None,
+            vad: None,
         }
     }
 }
@@ -168,6 +177,9 @@ fn default_config(
 
 pub struct Recorder {
     source: Source,
+    /// El detector de voz colgado de esta captura, si habia modelo. Al soltarlo se para
+    /// su hilo, asi que vive exactamente lo que vive la captura.
+    vad: Option<LiveVad>,
     device: String,
     sample_rate: u32,
     channels: u16,
@@ -192,9 +204,27 @@ impl Recorder {
     /// Devuelve error si el dispositivo no existe o no se puede abrir, y lo hace **antes**
     /// de dar la captura por buena: un boton que se pone verde y no captura nada es peor
     /// que un error.
-    pub fn start(source: Source, requested: Option<String>) -> AppResult<Self> {
+    /// `vad_model` es opcional: sin el, la captura funciona igual y no hay deteccion de
+    /// voz. Es deliberado — el medidor y la eleccion de dispositivo tienen que poder
+    /// usarse antes de descargar nada.
+    pub fn start(
+        source: Source,
+        requested: Option<String>,
+        vad_model: Option<PathBuf>,
+    ) -> AppResult<Self> {
         let meter = Arc::new(Meter::new());
         let failure: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+
+        // Se arranca antes que el audio para que un modelo corrupto sea un error al
+        // pulsar "Escuchar" y no un hilo que muere sin que nadie se entere.
+        let (vad, sink) = match vad_model {
+            Some(model) => {
+                let (live, queue) = LiveVad::start(&model)?;
+                let dropped = live.dropped_counter();
+                (Some(live), Some((queue, dropped)))
+            }
+            None => (None, None),
+        };
 
         let (stop_tx, stop_rx) = mpsc::channel::<()>();
         let (ready_tx, ready_rx) = mpsc::channel::<AppResult<Opened>>();
@@ -205,7 +235,7 @@ impl Recorder {
         let thread = std::thread::Builder::new()
             .name("captura-audio".into())
             .spawn(move || {
-                match open_stream(source, requested.as_deref(), &thread_meter, &thread_failure) {
+                match open_stream(source, requested.as_deref(), &thread_meter, &thread_failure, sink) {
                     Err(err) => {
                         let _ = ready_tx.send(Err(err));
                     }
@@ -249,6 +279,7 @@ impl Recorder {
 
         Ok(Self {
             source,
+            vad,
             device: opened.device,
             sample_rate: opened.sample_rate,
             channels: opened.channels,
@@ -275,6 +306,7 @@ impl Recorder {
                 .lock()
                 .ok()
                 .and_then(|failure| failure.clone()),
+            vad: self.vad.as_ref().map(LiveVad::state),
         }
     }
 }
@@ -292,11 +324,14 @@ impl Drop for Recorder {
     }
 }
 
+type Sink = (SampleSink, Arc<AtomicUsize>);
+
 fn open_stream(
     source: Source,
     requested: Option<&str>,
     meter: &Arc<Meter>,
     failure: &Arc<Mutex<Option<String>>>,
+    sink: Option<Sink>,
 ) -> AppResult<(cpal::Stream, Option<cpal::Stream>, Opened)> {
     let host = cpal::default_host();
 
@@ -338,9 +373,9 @@ fn open_stream(
     // lo que ya hace la biblioteca y quedarnos con la version que envejece peor.
     let stream_config: cpal::StreamConfig = config.clone().into();
     let stream = match config.sample_format() {
-        cpal::SampleFormat::F32 => build::<f32>(&device, &stream_config, meter, failure),
-        cpal::SampleFormat::I16 => build::<i16>(&device, &stream_config, meter, failure),
-        cpal::SampleFormat::U16 => build::<u16>(&device, &stream_config, meter, failure),
+        cpal::SampleFormat::F32 => build::<f32>(&device, &stream_config, meter, failure, sink),
+        cpal::SampleFormat::I16 => build::<i16>(&device, &stream_config, meter, failure, sink),
+        cpal::SampleFormat::U16 => build::<u16>(&device, &stream_config, meter, failure, sink),
         // Se enumeran los tres que WASAPI entrega en la practica. Un formato nuevo tiene
         // que dar un error visible, no una captura muda.
         other => {
@@ -407,6 +442,7 @@ fn build<T>(
     config: &cpal::StreamConfig,
     meter: &Arc<Meter>,
     failure: &Arc<Mutex<Option<String>>>,
+    sink: Option<Sink>,
 ) -> AppResult<cpal::Stream>
 where
     T: SizedSample,
@@ -415,6 +451,10 @@ where
     let meter = Arc::clone(meter);
     let on_error = Arc::clone(failure);
     let mut buffer: Vec<f32> = Vec::new();
+    let mut mono: Vec<f32> = Vec::new();
+    let channels = config.channels;
+    let sample_rate = config.sample_rate;
+    let mut sink = sink;
 
     device
         .build_input_stream(
@@ -425,6 +465,20 @@ where
                 buffer.clear();
                 buffer.extend(data.iter().map(|sample| f32::from_sample(*sample)));
                 meter.push(&buffer);
+
+                // El VAD trabaja a 16 kHz mono: se convierte aqui, una vez, en vez de
+                // mandarle el doble de datos y que los tire el.
+                if let Some((queue, dropped)) = sink.as_mut() {
+                    mono.clear();
+                    resample::to_mono_16k(&buffer, channels, sample_rate, &mut mono);
+                    let pushed = queue.push_slice(&mono);
+                    if pushed < mono.len() {
+                        // La cola llena significa que el VAD no da abasto. Se tira lo
+                        // nuevo y se cuenta: un detector que no vio parte del audio no
+                        // puede presentarse como si lo hubiera visto todo.
+                        dropped.fetch_add(mono.len() - pushed, Ordering::Relaxed);
+                    }
+                }
             },
             move |err| {
                 // Aqui no se puede hacer nada mas que dejar constancia: la UI lo lee al
@@ -443,6 +497,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Por encima de esto ya no hay duda de que el modelo esta viendo voz. No es el umbral
+    /// de decision del VAD —ese es cosa de `vad`— sino lo que se le exige a este test.
+    const SPEECH_CERTAIN: f32 = 0.9;
 
     /// No comprueba que haya microfono —una maquina sin tarjeta de sonido es legitima—
     /// sino que enumerar no revienta y que lo que sale tiene sentido.
@@ -498,7 +556,7 @@ mod tests {
     #[test]
     #[ignore = "toma el micrófono del equipo"]
     fn captura_medio_segundo_y_mide() {
-        let recorder = Recorder::start(Source::Mic, None).expect("arrancar la captura");
+        let recorder = Recorder::start(Source::Mic, None, None).expect("arrancar la captura");
         std::thread::sleep(std::time::Duration::from_millis(500));
 
         let status = recorder.status();
@@ -520,6 +578,72 @@ mod tests {
         );
     }
 
+    /// La cadena entera y de verdad: **el sintetizador de voz de Windows habla, el
+    /// loopback lo captura, se remuestrea a 16 kHz y Silero decide que eso es voz y que
+    /// ha terminado.** Es lo mas cerca que se puede estar de una entrevista sin que haya
+    /// un entrevistador delante, y es automatico.
+    ///
+    /// Sin esto, cada pieza esta probada por separado y la cadena no lo esta, que es
+    /// justo donde se esconden los fallos: un remuestreo mal alineado o una cola que no
+    /// llena dan un VAD que nunca oye nada y no da ningun error.
+    ///
+    /// `INTERVIEW_COPILOT_VAD=<ruta> cargo test --lib -- --ignored --nocapture la_cadena`
+    #[test]
+    #[ignore = "habla por los altavoces y toma la salida de audio"]
+    fn la_cadena_entera_detecta_una_frase_hablada() {
+        let Ok(model) = std::env::var("INTERVIEW_COPILOT_VAD") else {
+            panic!("define INTERVIEW_COPILOT_VAD con la ruta de silero_vad.onnx");
+        };
+
+        let recorder = Recorder::start(Source::System, None, Some(PathBuf::from(model)))
+            .expect("abrir el loopback con VAD");
+
+        // Una frase larga: el detector necesita al menos dos ventanas de 32 ms con voz
+        // para abrir turno, y 700 ms de silencio para cerrarlo.
+        let hablado = std::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                "Add-Type -AssemblyName System.Speech;                  $voz = New-Object System.Speech.Synthesis.SpeechSynthesizer;                  $voz.Speak('Cuéntame un proyecto complicado en el que hayas trabajado')",
+            ])
+            .status();
+        println!("sintetizador: {hablado:?}");
+
+        // El silencio que cierra el turno son 700 ms; se espera algo mas.
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+
+        let status = recorder.status();
+        let vad = status.vad.expect("la captura tenia que llevar VAD");
+        println!(
+            "turnos: {}, ultimo: {:?} ms, voz maxima: {:.3}, perdidas: {}",
+            vad.turns, vad.last_turn_ms, vad.max_probability, vad.dropped
+        );
+        println!("pico que vio el VAD: {:.3}", vad.peak_in);
+        println!(
+            "audio: {} muestras, rms {:.1} dB, pico {:.1} dB",
+            status.frames, status.level.rms_dbfs, status.level.peak_dbfs
+        );
+
+        assert_eq!(status.error, None);
+        assert!(status.frames > 0, "no llegó audio por el loopback");
+        assert_eq!(vad.dropped, 0, "el VAD no vio todo el audio");
+
+        assert!(
+            vad.max_probability > SPEECH_CERTAIN,
+            "el sintetizador habló y el modelo no lo vio: máxima {:.3}",
+            vad.max_probability
+        );
+        assert!(
+            vad.turns >= 1,
+            "hubo voz clara y no se cerró ningún turno: el fin de turno no dispara"
+        );
+        let hablado_ms = vad.last_turn_ms.expect("un turno cerrado trae su duracion");
+        assert!(
+            hablado_ms >= 1000,
+            "la frase duró {hablado_ms} ms de voz: el detector la partió en trozos"
+        );
+    }
+
     /// El loopback, y de paso la pregunta que no se puede contestar razonando: **¿entrega
     /// datos WASAPI cuando no suena nada?** Si no lo hace, el medidor se queda congelado y
     /// hay que mantener abierto un flujo mudo de reproduccion para que siga el reloj.
@@ -530,7 +654,7 @@ mod tests {
     #[test]
     #[ignore = "reproduce un sonido y toma la salida de audio"]
     fn el_loopback_captura_lo_que_suena() {
-        let recorder = Recorder::start(Source::System, None).expect("abrir el loopback");
+        let recorder = Recorder::start(Source::System, None, None).expect("abrir el loopback");
         println!("dispositivo: {}", recorder.device);
 
         std::thread::sleep(std::time::Duration::from_secs(1));

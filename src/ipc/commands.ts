@@ -162,3 +162,13 @@ export async function stopCapture(source: Source): Promise<void> {
 export function captureStatus(): Promise<CaptureSnapshot> {
   return invoke<CaptureSnapshot>('capture_status');
 }
+
+/** Si el modelo del VAD está descargado. */
+export function vadModelPresent(): Promise<boolean> {
+  return invoke<boolean>('vad_model_present');
+}
+
+/** Descarga el modelo del VAD (2,2 MB). No se descarga solo: §2 pide no depender de la red. */
+export async function downloadVadModel(): Promise<void> {
+  await invoke('download_vad_model');
+}

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { captureStatus, stopCapture } from '@/ipc/commands';
-import { describeError } from '@/hooks/useAsync';
+import { captureStatus, downloadVadModel, stopCapture, vadModelPresent } from '@/ipc/commands';
+import { describeError, useAsync } from '@/hooks/useAsync';
 import { SourcePanel } from '@/components/audio/SourcePanel';
 import type { CaptureSnapshot } from '@/ipc/types';
 
@@ -17,7 +17,9 @@ const POLL_MS = 100;
 export function AudioCard() {
   const [snapshot, setSnapshot] = useState<CaptureSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState(false);
   const timer = useRef<number | null>(null);
+  const vadModel = useAsync(vadModelPresent);
 
   const poll = useCallback(() => {
     captureStatus()
@@ -44,6 +46,22 @@ export function AudioCard() {
   }, [poll]);
 
   const indicator = snapshot?.indicator ?? 'OFF';
+  const hasVadModel = vadModel.state.status === 'ready' && vadModel.state.value;
+
+  const onDownloadVad = useCallback(() => {
+    setDownloading(true);
+    setError(null);
+    downloadVadModel()
+      .then(() => {
+        vadModel.reload();
+      })
+      .catch((cause: unknown) => {
+        setError(describeError(cause));
+      })
+      .finally(() => {
+        setDownloading(false);
+      });
+  }, [vadModel]);
 
   return (
     <section className="card">
@@ -79,6 +97,21 @@ export function AudioCard() {
         status={snapshot?.system ?? null}
         onChanged={poll}
       />
+
+      {vadModel.state.status === 'ready' && !hasVadModel && (
+        <div className="model__actions">
+          <button type="button" className="btn btn--ghost" disabled={downloading} onClick={onDownloadVad}>
+            {downloading ? 'Descargando…' : 'Descargar el detector de voz (2,2 MB)'}
+          </button>
+        </div>
+      )}
+      {vadModel.state.status === 'ready' && !hasVadModel && (
+        <p className="muted small">
+          Sin él, el audio se captura y se mide igual; lo que no hay es detección de cuándo
+          alguien empieza y termina de hablar, que es lo que dispara la respuesta. Se descarga
+          cuando tú lo pides: la app no sale a la red por su cuenta.
+        </p>
+      )}
 
       {error !== null && <p className="error">{error}</p>}
     </section>

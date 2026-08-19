@@ -7,5 +7,7 @@
 
 pub mod capture;
 pub mod level;
+pub mod resample;
+pub mod vad;
 
 pub use capture::{devices, CaptureStatus, InputDevice, Recorder, Source};

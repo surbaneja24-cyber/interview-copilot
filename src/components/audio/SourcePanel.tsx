@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react';
 import { audioDevices, startCapture, stopCapture } from '@/ipc/commands';
 import { describeError, useAsync } from '@/hooks/useAsync';
 import { LevelMeter } from '@/components/audio/LevelMeter';
+import { TurnIndicator } from '@/components/audio/TurnIndicator';
 import type { CaptureStatus, Source } from '@/ipc/types';
 
 interface Props {
@@ -97,6 +98,7 @@ export function SourcePanel({
       )}
 
       <LevelMeter level={status?.level ?? null} />
+      <TurnIndicator vad={status?.vad ?? null} />
 
       <div className="model__actions">
         <button type="button" className="btn" onClick={capturing ? onStop : onStart}>

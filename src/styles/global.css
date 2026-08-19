@@ -495,3 +495,20 @@ code {
 .source h3 {
   margin: 0;
 }
+
+/* Fila de datos del detector de voz, bajo el medidor. */
+.vad {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: center;
+  margin-top: var(--space-2);
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.vad__speaking {
+  color: var(--text);
+  font-weight: 600;
+}

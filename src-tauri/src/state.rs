@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use crate::audio::{CaptureStatus, Recorder, Source};
+use crate::audio::{vad, CaptureStatus, Recorder, Source};
 use crate::embedding::LocalEmbeddingProvider;
 use crate::error::{AppError, AppResult};
 use crate::llm::settings::SETTINGS_KEY;
@@ -102,11 +102,25 @@ impl AppState {
             .map_err(|err| AppError::Poisoned(err.to_string()))?;
 
         slot.take();
-        let recorder = Recorder::start(source, device)?;
+        // Si el modelo esta descargado, la captura arranca con deteccion de voz; si no,
+        // arranca sin ella. Obligar a descargar 2 MB antes de poder ver el medidor seria
+        // poner una puerta donde no hace falta.
+        let model = self.vad_model();
+        let recorder = Recorder::start(source, device, model)?;
         let status = recorder.status();
         *slot = Some(recorder);
 
         Ok(status)
+    }
+
+    pub fn models_dir(&self) -> &std::path::Path {
+        &self.models_dir
+    }
+
+    /// Ruta del modelo del VAD si esta descargado.
+    pub fn vad_model(&self) -> Option<PathBuf> {
+        let path = vad::model_path(&self.models_dir);
+        path.is_file().then_some(path)
     }
 
     pub fn stop_capture(&self, source: Source) -> AppResult<()> {

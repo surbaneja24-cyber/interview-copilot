@@ -185,6 +185,21 @@ fn stop_capture(state: tauri::State<'_, AppState>, source: Source) -> AppResult<
     state.stop_capture(source)
 }
 
+/// Si el modelo del VAD esta descargado. La UI lo usa para ofrecer la descarga en vez de
+/// fallar al arrancar la captura.
+#[tauri::command]
+fn vad_model_present(state: tauri::State<'_, AppState>) -> bool {
+    state.vad_model().is_some()
+}
+
+/// Descarga el modelo del VAD (2,2 MB). Es `async` porque toca la red: un comando sincrono
+/// congelaria la ventana mientras dura.
+#[tauri::command]
+async fn download_vad_model(state: tauri::State<'_, AppState>) -> AppResult<()> {
+    audio::vad::ensure_model(state.models_dir()).await?;
+    Ok(())
+}
+
 /// Nivel y estado de las dos fuentes. La UI lo pide mientras dibuja las barras; por eso el
 /// nivel no viaja por un `Channel` como la respuesta del LLM (ver `audio::capture`).
 #[tauri::command]
@@ -324,6 +339,8 @@ pub fn run() {
             start_capture,
             stop_capture,
             capture_status,
+            vad_model_present,
+            download_vad_model,
             llm_settings,
             save_llm_settings,
             llm_providers,

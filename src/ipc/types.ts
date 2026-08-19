@@ -215,6 +215,26 @@ export interface AudioLevel {
   readonly peakDbfs: number;
 }
 
+/** Estado del detector de voz. */
+export interface VadState {
+  readonly turn: 'silent' | 'speaking';
+  /** Probabilidad de la última ventana, de 0 a 1. Se enseña para ver con qué margen se decide. */
+  readonly probability: number;
+  /**
+   * La más alta desde que arrancó la captura. Es el dato con el que se sabrá si el umbral
+   * está bien puesto: sin él, un VAD que casi no dispara y uno que dispara de sobra se ven
+   * igual en pantalla.
+   */
+  readonly maxProbability: number;
+  /** Duración del último turno cerrado, en milisegundos de voz. */
+  readonly lastTurnMs: number | null;
+  readonly turns: number;
+  /** Muestras que el VAD no llegó a ver porque la cola se llenó. */
+  readonly dropped: number;
+  /** La muestra más alta que ha visto el detector: distingue "no hay voz" de "no llega audio". */
+  readonly peakIn: number;
+}
+
 export interface CaptureStatus {
   readonly source: Source;
   readonly capturing: boolean;
@@ -226,6 +246,8 @@ export interface CaptureStatus {
   readonly frames: number;
   /** Fallo posterior al arranque: el dispositivo se fue a mitad. */
   readonly error: string | null;
+  /** `null` si no hay modelo de VAD descargado, que no es lo mismo que "no hay voz". */
+  readonly vad: VadState | null;
 }
 
 export interface CaptureSnapshot {

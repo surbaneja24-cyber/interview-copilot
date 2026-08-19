@@ -232,11 +232,12 @@ async fn ensure_success(
     }
 
     let body = response.text().await.unwrap_or_default();
+    let detail = error_detail(&body);
+
     Err(AppError::Provider(format!(
-        "{} respondio {status}: {}{}",
+        "{} respondio {status}: {detail}{}",
         endpoint.base_url,
-        error_detail(&body),
-        hint_for(status.as_u16()),
+        hint_for(status.as_u16(), &detail),
     )))
 }
 
@@ -254,13 +255,30 @@ fn error_detail(body: &str) -> String {
         .unwrap_or_else(|| body.chars().take(300).collect())
 }
 
-fn hint_for(status: u16) -> &'static str {
+/// Anade una pista solo cuando aporta algo que el servidor no ha dicho ya.
+///
+/// El 429 es el caso que obliga a mirar el cuerpo: significa tanto "vas demasiado rapido"
+/// como "la cuenta no tiene saldo", y son dos problemas sin nada que ver. Dar por hecho
+/// el primero le decia al usuario que esperase cuando lo que tenia que hacer era pagar,
+/// contradiciendo ademas al propio mensaje del servidor justo encima.
+fn hint_for(status: u16, detail: &str) -> &'static str {
+    let detail = detail.to_lowercase();
+
     match status {
         401 | 403 => " Revisa la clave de API en Ajustes.",
         404 => " Revisa la URL del servidor y que el modelo exista.",
-        429 => " El proveedor esta limitando el ritmo de peticiones.",
+        429 if mentions_billing(&detail) => {
+            " No es un limite de ritmo: la cuenta se ha quedado sin saldo."
+        }
+        429 => " Estas enviando peticiones mas rapido de lo que el proveedor admite.",
         _ => "",
     }
+}
+
+fn mentions_billing(detail: &str) -> bool {
+    ["credit", "quota", "billing", "saldo", "payment"]
+        .iter()
+        .any(|word| detail.contains(word))
 }
 
 async fn read_json(response: reqwest::Response, endpoint: &Endpoint) -> AppResult<Value> {
@@ -380,6 +398,25 @@ mod tests {
     fn el_detalle_del_error_sale_del_cuerpo_json() {
         let body = r#"{"error":{"message":"model not found","type":"invalid_request_error"}}"#;
         assert_eq!(error_detail(body), "model not found");
+    }
+
+    /// Un 429 por falta de saldo y uno por ritmo son problemas distintos y la solucion no
+    /// se parece en nada. Confundirlos manda al usuario a esperar cuando tiene que pagar.
+    #[test]
+    fn distingue_el_429_por_saldo_del_429_por_ritmo() {
+        let sin_saldo = hint_for(429, "You have no credits remaining. Add credits to continue");
+        assert!(sin_saldo.contains("saldo"));
+        assert!(!sin_saldo.contains("rapido"));
+
+        let por_ritmo = hint_for(429, "Rate limit reached for gpt-4o-mini");
+        assert!(por_ritmo.contains("rapido"));
+        assert!(!por_ritmo.contains("saldo"));
+    }
+
+    #[test]
+    fn los_codigos_sin_pista_util_no_anaden_nada() {
+        assert_eq!(hint_for(500, "internal server error"), "");
+        assert_eq!(hint_for(503, "overloaded"), "");
     }
 
     /// Ollama y llama-server no siempre devuelven el sobre de OpenAI. El cuerpo crudo es

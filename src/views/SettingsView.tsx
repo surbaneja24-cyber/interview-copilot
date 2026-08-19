@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react';
 import { deleteAllData, hardwareReport } from '@/ipc/commands';
 import { describeError, useAsync } from '@/hooks/useAsync';
+import { AudioCard } from '@/components/AudioCard';
 import { LlmSettingsCard } from '@/components/LlmSettingsCard';
 import type { ExecutionProfile } from '@/ipc/types';
 
@@ -92,6 +93,8 @@ export function SettingsView() {
       </section>
 
       <LlmSettingsCard />
+
+      <AudioCard />
 
       <section className="card card--danger">
         <h2>Borrar todos los datos</h2>

@@ -186,3 +186,37 @@ export type AnswerEvent =
       readonly structure: readonly string[];
     }
   | { readonly event: 'failed'; readonly message: string };
+
+// ---------------------------------------------------------------------------
+// Audio (fase 4)
+// ---------------------------------------------------------------------------
+
+export interface InputDevice {
+  /**
+   * Identificador estable entre reinicios y reconexiones, que da cpal. Es lo que se
+   * manda al backend para abrir: el nombre no distingue dos tarjetas iguales.
+   */
+  readonly id: string;
+  readonly name: string;
+  readonly isDefault: boolean;
+  readonly channels: number;
+  readonly sampleRate: number;
+}
+
+/** Decibelios a fondo de escala: 0 es el máximo y el suelo es −100, nunca −∞. */
+export interface AudioLevel {
+  readonly rmsDbfs: number;
+  readonly peakDbfs: number;
+}
+
+export interface CaptureStatus {
+  readonly capturing: boolean;
+  readonly device: string | null;
+  readonly sampleRate: number;
+  readonly channels: number;
+  readonly level: AudioLevel;
+  /** Muestras recibidas. Cero con la captura abierta significa que no llega nada. */
+  readonly frames: number;
+  /** Fallo posterior al arranque: el dispositivo se fue a mitad. */
+  readonly error: string | null;
+}

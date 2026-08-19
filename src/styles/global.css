@@ -445,3 +445,42 @@ code {
 .fragments summary {
   cursor: pointer;
 }
+
+/*
+ * Medidor de nivel (§11). Dos capas: la barra es la energia media y la marca es el pico
+ * retenido, que es lo unico que avisa de una saturacion demasiado corta para verse en la
+ * media.
+ */
+.meter {
+  position: relative;
+  height: 10px;
+  margin: var(--space-3) 0 var(--space-2);
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+
+.meter__bar {
+  height: 100%;
+  background: linear-gradient(90deg, #3fb950 0%, #3fb950 70%, #d29922 88%, #f85149 100%);
+  background-size: 100vw 100%;
+  transition: width 0.08s linear;
+}
+
+.meter__peak {
+  position: absolute;
+  top: 0;
+  width: 2px;
+  height: 100%;
+  background: var(--text);
+  opacity: 0.7;
+}
+
+.meter__scale {
+  display: flex;
+  justify-content: space-between;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}

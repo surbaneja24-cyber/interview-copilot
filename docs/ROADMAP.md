@@ -166,15 +166,45 @@ Lo que sigue sin medirse, y hace falta un modelo capaz para ello:
 
 ## Fase 4 — Audio y STT
 
-- [ ] Enumerar dispositivos de entrada y salida
-- [ ] Captura de micrófono y de loopback del sistema (WASAPI)
-- [ ] Indicador MIC / SYSTEM AUDIO / BOTH y medidor de nivel (§11)
+En este orden y no otro: micrófono con medidor —lo único verificable hablando y sin
+compilar nada de C++— y whisper.cpp el último, que es el que exige compilar con 4 núcleos.
+
+- [x] Enumerar dispositivos de entrada, con el identificador estable de cpal 0.17
+- [x] Captura de micrófono (`cpal`, WASAPI) en su propio hilo
+- [x] Medidor de nivel: RMS y pico retenido, con su barra en Ajustes (§11)
+- [ ] Loopback del sistema (WASAPI) e indicador MIC / SYSTEM AUDIO / BOTH
 - [ ] VAD con detección de fin de turno
 - [ ] `LocalWhisperProvider` con whisper.cpp, descarga de modelos gestionada por la app
 - [ ] Transcripción incremental sobre ventanas solapadas
 - [ ] Medición de latencia por etapa, visible en un panel de diagnóstico
 
 **Hito:** hablo y el texto aparece en pantalla en tiempo real.
+
+### Lo que ya funciona, medido el 2026-08-19
+
+**Verificado hablando**, que es el criterio de esta fase: la barra se mueve con la voz en
+Ajustes → Micrófono. Windows confirma además que el dispositivo se suelta al parar — deja
+apuntado inicio y fin de cada uso, y el fin está puesto.
+
+Medio segundo de captura del micrófono real: `Auriculares con micrófono`, 48 000 Hz, 2
+canales, 47 040 muestras, RMS −47,7 dB y pico −20,9 dB con la sala en silencio. El test
+que lo hace está marcado `#[ignore]` porque toma el micrófono del equipo.
+
+Tres decisiones de esta parte, para no rehacerlas:
+
+- **El identificador de dispositivo no es el nombre.** cpal 0.17 da un `DeviceId` estable
+  entre reinicios y reconexiones, y ya marca `name()` como obsoleto. El nombre no distingue
+  dos tarjetas iguales, y el identificador es lo que permitirá recordar en los ajustes qué
+  micrófono eligió el usuario.
+- **El nivel no viaja por un `Channel` de Tauri.** La llamada de retorno de audio entra
+  cada 10 ms: serían cien mensajes por segundo para una barra que se repinta sesenta veces.
+  La UI pregunta cuando va a dibujar, cada 100 ms.
+- **Se cuentan las muestras recibidas, no solo el nivel.** Un micrófono silenciado por
+  hardware y una sala en silencio dan la misma barra plana, y no son el mismo problema.
+
+**Pendiente cuando entre el loopback:** el nivel de dos fuentes a la vez y el indicador de
+§11 completo. Hoy la tarjeta dice sin rodeos que el audio del sistema todavía no se captura,
+en vez de enseñar un selector MIC / SYSTEM / BOTH con dos opciones que no hacen nada.
 
 ## Fase 5 — Entrevista en vivo (cierre del MVP 1)
 

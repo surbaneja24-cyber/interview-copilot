@@ -26,6 +26,10 @@ pub enum AppError {
     #[error("{0}")]
     Secrets(String),
 
+    /// Captura de audio: dispositivo que no abre, que desaparece o formato imposible.
+    #[error("{0}")]
+    Audio(String),
+
     #[error("{0}")]
     Invalid(String),
 }

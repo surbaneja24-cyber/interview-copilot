@@ -224,6 +224,33 @@ Cuatro optimizaciones que están en el diseño desde el principio, no como mejor
 3. **Transcripción incremental.** Whisper corre sobre ventanas solapadas mientras el entrevistador sigue hablando; al detectar fin de turno, la transcripción ya está casi completa.
 4. **Retrieval especulativo.** En cuanto el VAD marca una pausa larga se lanza el retriever con la transcripción parcial, sin esperar a la confirmación de fin de turno. Si la pregunta continúa, se descarta y se repite: cuesta milisegundos de CPU y ahorra cientos de ms de latencia percibida.
 
+## 4.1 Captura de audio: dos restricciones que dan forma al módulo
+
+**`cpal::Stream` no es `Send`.** En Windows la sesión de audio pertenece al hilo que la
+abrió, así que el flujo no puede guardarse en el estado de Tauri, que se comparte entre
+hilos. Vive en un hilo propio que lo crea y se queda bloqueado en un `recv()` hasta que se
+suelta el emisor. Parar la captura es soltar la estructura, no apagar un interruptor: eso
+garantiza que el dispositivo queda libre antes de intentar abrir otro, que es justo lo que
+falla al cambiar de micrófono si se hace al revés.
+
+**La llamada de retorno de audio no puede bloquearse.** Se ejecuta con un plazo de
+milisegundos, y un mutex, una reserva de memoria o un `log::info!` ahí no producen un
+retraso de dibujo sino un corte de audio. Por eso lo único que hace es medir la ventana y
+escribir dos `f32` en atómicos, con el buffer de conversión reutilizado entre llamadas.
+
+De ahí salen dos decisiones más:
+
+- **El nivel no viaja por un `Channel` de Tauri**, al revés que la respuesta del LLM. La
+  llamada de retorno entra cada 10 ms: serían cien mensajes por segundo para una barra que
+  se repinta sesenta veces. La UI pregunta cuando va a dibujar.
+- **El pico se retiene hasta que se lee.** La UI mira cada 100 ms y una ventana de audio
+  dura 10: sin retención, nueve de cada diez picos no se verían y una saturación breve
+  pasaría desapercibida, que es exactamente lo que un medidor tiene que enseñar.
+
+El suelo del medidor es −100 dB y no −∞ por un motivo que no es estético: JSON no tiene
+infinito, `serde_json` lo serializa como `null`, y al otro lado hay un `number`. Hay un
+test que lo fija.
+
 ## 5. La regla de no inventar experiencia (§6)
 
 Es un requisito de producto, así que se implementa como control explícito y no como una frase en el prompt. Lo que sigue documenta **un intento fallido y la solución que lo sustituye**, porque el intento fallido es justo el que la intuición vuelve a sugerir.

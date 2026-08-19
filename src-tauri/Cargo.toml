@@ -44,10 +44,17 @@ tokio = { version = "1", default-features = false, features = ["sync"] }
 # La clave de API no puede vivir en la base de datos (§31): va al almacen de
 # credenciales del sistema, que en Windows es Credential Manager.
 keyring = { version = "3", features = ["windows-native"] }
+# Captura de audio (§11). 0.17 y no 0.18 porque la 0.18 exige rustc 1.85 y este crate
+# promete compilar con 1.82; prometer una version que no se ha probado ya salio mal una
+# vez (ver ROADMAP, fase 0).
+cpal = "0.17.3"
 
 [target.'cfg(windows)'.dependencies]
-# Misma version que ya arrastra Tauri, para no compilar dos copias del crate.
-windows = { version = "0.57", features = [
+# Misma version que ya arrastran Tauri y cpal, para no compilar dos copias del crate.
+# Estaba en 0.57 y al entrar cpal aparecio una segunda copia; subirla exigio un cambio
+# real, no cosmetico: en 0.61 `GetDesc1` devuelve el descriptor en vez de rellenar un
+# parametro de salida. Queda una 0.57 en el arbol que no es nuestra, la de sysinfo.
+windows = { version = "0.61", features = [
   "Win32_Foundation",
   "Win32_Graphics_Dxgi",
   "Win32_Graphics_Dxgi_Common",

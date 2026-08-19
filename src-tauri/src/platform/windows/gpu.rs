@@ -3,7 +3,7 @@
 //! Se usa DXGI y no WMI porque es la API que reporta la memoria tal y como la ve el
 //! runtime de graficos, que es lo que de verdad limita a llama.cpp o a whisper.cpp.
 
-use ::windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, IDXGIFactory1, DXGI_ADAPTER_DESC1};
+use ::windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, IDXGIFactory1};
 
 use crate::platform::GpuInfo;
 
@@ -57,11 +57,13 @@ fn enumerate() -> ::windows::core::Result<Vec<GpuInfo>> {
         while let Ok(adapter) = factory.EnumAdapters1(index) {
             index += 1;
 
-            let mut desc = DXGI_ADAPTER_DESC1::default();
-            if let Err(err) = adapter.GetDesc1(&mut desc) {
-                log::warn!("descriptor del adaptador {index} ilegible: {err}");
-                continue;
-            }
+            let desc = match adapter.GetDesc1() {
+                Ok(desc) => desc,
+                Err(err) => {
+                    log::warn!("descriptor del adaptador {index} ilegible: {err}");
+                    continue;
+                }
+            };
 
             if desc.Flags & ADAPTER_FLAG_SOFTWARE != 0 {
                 continue;

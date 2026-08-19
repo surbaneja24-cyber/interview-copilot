@@ -2,10 +2,12 @@ import { Channel, invoke } from '@tauri-apps/api/core';
 import type {
   AnswerEvent,
   AnswerStyle,
+  CaptureStatus,
   DocumentInfo,
   DocumentKind,
   HardwareReport,
   IndexReport,
+  InputDevice,
   LlmSettings,
   ModelStatus,
   NewProject,
@@ -127,4 +129,30 @@ export async function ask(
   const channel = new Channel<AnswerEvent>();
   channel.onmessage = onEvent;
   await invoke('ask', { projectId, question, style, onEvent: channel });
+}
+
+// ---------------------------------------------------------------------------
+// Audio (fase 4)
+// ---------------------------------------------------------------------------
+
+/** Se consulta cada vez: enchufar unos cascos entre dos visitas a Ajustes es lo normal. */
+export function audioInputs(): Promise<readonly InputDevice[]> {
+  return invoke<InputDevice[]>('audio_inputs');
+}
+
+/** `null` abre el micrófono que el sistema tenga por defecto. */
+export function startCapture(device: string | null): Promise<CaptureStatus> {
+  return invoke<CaptureStatus>('start_capture', { device });
+}
+
+export async function stopCapture(): Promise<void> {
+  await invoke('stop_capture');
+}
+
+/**
+ * Nivel y estado de la captura. Se pregunta al ritmo al que se dibuja la barra; el nivel
+ * no viaja por un `Channel` porque serían cien mensajes por segundo para un dibujo.
+ */
+export function captureStatus(): Promise<CaptureStatus> {
+  return invoke<CaptureStatus>('capture_status');
 }

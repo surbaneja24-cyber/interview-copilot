@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use crate::audio::{CaptureStatus, Recorder};
 use crate::embedding::LocalEmbeddingProvider;
 use crate::error::{AppError, AppResult};
 use crate::llm::settings::SETTINGS_KEY;
@@ -29,6 +30,10 @@ pub struct AppState {
     /// unica forma de que un cambio en Ajustes no deje viva una conexion a un extremo que
     /// el usuario acaba de dejar de usar.
     llm: Mutex<Option<Arc<dyn LlmProvider>>>,
+    /// La captura de audio, si hay alguna en marcha. Solo una: dos flujos abiertos sobre
+    /// el mismo microfono se pelean por el dispositivo y ninguno de los dos entrega nada
+    /// util.
+    capture: Mutex<Option<Recorder>>,
 }
 
 impl AppState {
@@ -38,6 +43,7 @@ impl AppState {
             models_dir,
             embedder: Mutex::new(None),
             llm: Mutex::new(None),
+            capture: Mutex::new(None),
         }
     }
 
@@ -73,6 +79,48 @@ impl AppState {
         if let Ok(mut slot) = self.llm.lock() {
             slot.take();
         }
+    }
+
+    /// Arranca la captura, parando la anterior si la habia.
+    ///
+    /// El orden importa y es al reves de lo que parece: primero se suelta la que hubiera
+    /// —soltarla es lo que cierra el dispositivo— y solo despues se abre la nueva. Al
+    /// reves, cambiar de microfono fallaria porque el anterior seguiria cogido.
+    pub fn start_capture(&self, device: Option<String>) -> AppResult<CaptureStatus> {
+        let mut slot = self
+            .capture
+            .lock()
+            .map_err(|err| AppError::Poisoned(err.to_string()))?;
+
+        slot.take();
+        let recorder = Recorder::start(device)?;
+        let status = recorder.status();
+        *slot = Some(recorder);
+
+        Ok(status)
+    }
+
+    pub fn stop_capture(&self) -> AppResult<()> {
+        let mut slot = self
+            .capture
+            .lock()
+            .map_err(|err| AppError::Poisoned(err.to_string()))?;
+
+        if slot.take().is_some() {
+            log::info!("captura de audio detenida");
+        }
+
+        Ok(())
+    }
+
+    /// Estado y nivel actuales. Lo llama la UI varias veces por segundo mientras haya una
+    /// barra en pantalla, asi que no puede hacer nada caro: leer dos atomicos.
+    pub fn capture_status(&self) -> CaptureStatus {
+        self.capture
+            .lock()
+            .ok()
+            .and_then(|slot| slot.as_ref().map(Recorder::status))
+            .unwrap_or_else(CaptureStatus::idle)
     }
 
     /// Devuelve el proveedor de embeddings, cargandolo si es la primera vez.

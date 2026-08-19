@@ -80,6 +80,24 @@ export function AskPanel({ projectId }: { readonly projectId: number | null }) {
         la respuesta.
       </p>
 
+      {/*
+        La pregunta ocupa su propia línea y los controles van debajo. En una tarjeta de
+        62ch —el ancho de lectura que fija `.card`— los tres en fila no caben: el
+        desplegable se lleva 197 px, el botón 105, y el campo de escribir se quedaba en
+        150 px para una frase entera. Medido en el DOM.
+      */}
+      <input
+        className="ask__question"
+        value={question}
+        placeholder="Cuéntame un proyecto complicado que hayas hecho"
+        onChange={(event) => {
+          setQuestion(event.target.value);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') onAsk();
+        }}
+      />
+
       <div className="row">
         <select
           value={style}
@@ -93,17 +111,6 @@ export function AskPanel({ projectId }: { readonly projectId: number | null }) {
             </option>
           ))}
         </select>
-        <input
-          className="grow"
-          value={question}
-          placeholder="Cuéntame un proyecto complicado que hayas hecho"
-          onChange={(event) => {
-            setQuestion(event.target.value);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') onAsk();
-          }}
-        />
         <button
           type="button"
           className="btn"

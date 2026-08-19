@@ -52,10 +52,19 @@ body {
   display: flex;
   flex-direction: column;
   height: 100%;
+  /* Nada de scroll horizontal en la ventana: si algo no cabe, que se parta o se encoja. */
+  overflow-x: hidden;
 }
 
+/*
+ * Las pestanas se parten en dos lineas antes que salirse. Con seis secciones y la ventana
+ * a media anchura se desbordaban 195 px y arrastraban scroll horizontal a toda la
+ * aplicacion; §30 pide ademas modos de ventana compacta, asi que estrechar tiene que ser
+ * un caso normal y no un accidente.
+ */
 .app__nav {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-2);
   padding: var(--space-3) var(--space-4);
   background: var(--bg-elevated);
@@ -228,6 +237,7 @@ body {
 
 .row {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-2);
   align-items: center;
   margin-bottom: var(--space-3);
@@ -237,8 +247,29 @@ body {
   align-self: auto;
 }
 
+/*
+ * `min-width: 0` no es adorno: sin el, un elemento flexible **no se encoge por debajo de
+ * su contenido**, que es el defecto de `min-width: auto`. Con un desplegable largo al lado
+ * -"Comportamental (STAR)"- los tres hijos de la fila sumaban 508 px dentro de una fila de
+ * 467 y el boton "Responder" se salia de la tarjeta 40 px. Medido en el DOM, no a ojo.
+ */
 .grow {
   flex: 1;
+  min-width: 0;
+}
+
+/*
+ * Y un suelo para que encogerse no acabe en un campo donde no se lee lo que se escribe:
+ * por debajo de esto la fila prefiere partirse, que para eso tiene `flex-wrap`.
+ */
+.row input {
+  min-width: 8rem;
+}
+
+/* La pregunta de la entrevista: linea entera, que es una frase y no un dato suelto. */
+.ask__question {
+  width: 100%;
+  margin-bottom: var(--space-2);
 }
 
 select,

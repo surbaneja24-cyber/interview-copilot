@@ -1,4 +1,8 @@
-//! Los providers concretos.
+//! El provider concreto que habla con un servidor compatible con OpenAI.
+//!
+//! Hay uno solo, y no uno por proveedor, porque los tres hablan el mismo protocolo byte
+//! a byte. Lo unico que difiere de verdad —si pide clave, si los datos salen del
+//! equipo— vive en `ProviderKind`. Ver `docs/ARCHITECTURE.md` seccion 2.
 //!
 //! **Por que hay una sola implementacion y no una por proveedor.** El spec (§18) nombra
 //! `LocalLLMProvider` y `OpenAIProvider` como piezas separadas, y en la mayoria de

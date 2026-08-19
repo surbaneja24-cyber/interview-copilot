@@ -1,4 +1,11 @@
-//! La respuesta estructurada de §8 y su lectura.
+//! El esquema de la respuesta del modelo, su parseo y su lectura incremental.
+//!
+//! El parseo es tolerante porque los modelos devuelven JSON *casi* siempre: tambien
+//! vallas de codigo, una frase de cortesia delante, o `keyPoints` donde se pidio
+//! `key_points`. Cada tolerancia de aqui viene de un fallo real y tiene su test.
+//!
+//! `StreamScanner` saca campos de un JSON que todavia se esta escribiendo, para poder
+//! mostrar la respuesta segun llega sin esperar a tenerla entera.
 //!
 //! Dos cosas viven aqui y conviene entender por que estan juntas:
 //!

@@ -1,4 +1,6 @@
-//! Ajustes persistentes: una tabla de clave/valor con el valor en JSON.
+//! Ajustes persistentes: clave y valor, con el valor en JSON.
+//!
+//! Nunca guarda claves de API. Ver `crate::secrets`.
 //!
 //! Nunca guarda claves de API. Ver `crate::secrets` y §31.
 

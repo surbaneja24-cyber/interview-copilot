@@ -234,16 +234,13 @@ async fn ask(
         }
     };
 
-    answering::answer_question(
-        &state.db,
-        embedder.as_ref(),
-        provider.as_ref(),
-        &settings,
-        project_id,
-        &question,
-        style,
-        &mut emit,
-    )
+    answering::Answering {
+        db: &state.db,
+        embedder: embedder.as_ref(),
+        provider: provider.as_ref(),
+        settings: &settings,
+    }
+    .answer(project_id, &question, style, &mut emit)
     .await
 }
 

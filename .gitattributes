@@ -1,0 +1,7 @@
+# Finales de linea normalizados en el repositorio. Sin esto, git marca ficheros
+# como modificados solo por haberlos tocado en Windows.
+* text=auto eol=lf
+
+*.png binary
+*.ico binary
+*.icns binary

@@ -1,4 +1,10 @@
-//! Orquestacion: pregunta → contexto → generacion → verificacion → pantalla.
+//! Orquestacion: pregunta, contexto, generacion, verificacion, pantalla.
+//!
+//! El detalle que ordena todo lo demas es cuando se puede ensenar texto. La respuesta
+//! llega token a token para que la latencia percibida sea baja, pero no puede mostrarse
+//! nada que no este respaldado. Como el prompt exige las citas antes que el texto,
+//! cuando empieza a llegar la respuesta ya se sabe si vale; hasta entonces `Gate` la
+//! retiene. Nunca se ensena algo que luego haya que retirar.
 //!
 //! El detalle que ordena todo lo demas es **cuando se puede ensenar texto**. La respuesta
 //! llega token a token para que la latencia percibida sea baja (§10), pero §6 prohibe
@@ -18,7 +24,7 @@ use serde::Serialize;
 use tokio::sync::mpsc::unbounded_channel;
 
 use crate::embedding::EmbeddingProvider;
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use crate::llm::answer::{self, ScanEvent, StreamScanner};
 use crate::llm::prompt::{self, AnswerStyle, FragmentSet};
 use crate::llm::verify::{self, DroppedCitation, Unsupported, Verdict, VerifiedCitation};
@@ -69,106 +75,136 @@ pub enum AnswerEvent {
     Failed { message: String },
 }
 
-/// Contesta una pregunta. `emit` recibe los eventos segun se producen; en la aplicacion
-/// los manda por un canal a la UI, y en los tests los guarda en un vector.
-pub async fn answer_question(
-    db: &Db,
-    embedder: &dyn EmbeddingProvider,
-    provider: &dyn LlmProvider,
-    settings: &LlmSettings,
-    project_id: i64,
-    question: &str,
-    style: AnswerStyle,
-    emit: &mut (dyn FnMut(AnswerEvent) + Send),
-) -> AppResult<()> {
-    let started = Instant::now();
+/// Todo lo que hace falta para contestar, junto para no arrastrar ocho parametros por
+/// cada paso.
+pub struct Answering<'a> {
+    pub db: &'a Db,
+    pub embedder: &'a dyn EmbeddingProvider,
+    pub provider: &'a dyn LlmProvider,
+    pub settings: &'a LlmSettings,
+}
 
-    let retrieval = Retriever::new(db, embedder).search(project_id, question, DEFAULT_TOP_K)?;
-    let fragments = FragmentSet::from_retrieval(&retrieval.chunks);
+impl Answering<'_> {
+    /// Contesta una pregunta. `emit` recibe los eventos segun se producen: en la
+    /// aplicacion los manda por un canal a la UI, y en los tests los guarda en un vector.
+    pub async fn answer(
+        &self,
+        project_id: i64,
+        question: &str,
+        style: AnswerStyle,
+        emit: &mut (dyn FnMut(AnswerEvent) + Send),
+    ) -> AppResult<()> {
+        let started = Instant::now();
 
-    if fragments.is_empty() {
-        emit(unsupported_event(Unsupported::NoContext, style));
-        return Ok(());
-    }
-
-    let description = provider.describe();
-    emit(AnswerEvent::Retrieved {
-        fragments: fragments
-            .all()
-            .iter()
-            .map(|fragment| FragmentSummary {
-                number: fragment.number,
-                document_title: fragment.document_title.clone(),
-                preview: preview_of(&fragment.text),
-            })
-            .collect(),
-        sent_to: if description.sends_data_outside {
-            description.endpoint.clone()
-        } else {
-            String::new()
-        },
-    });
-
-    let request = ChatRequest {
-        messages: prompt::build(question, style, &fragments),
-        temperature: settings.temperature,
-        max_tokens: settings.max_tokens,
-        json_mode: settings.json_mode,
-    };
-
-    let (tx, mut rx) = unbounded_channel();
-    let mut gate = Gate::default();
-
-    // Las dos mitades corren a la vez: una habla con el servidor y la otra va sacando
-    // campos del JSON segun llegan. Sin esto no hay streaming, solo espera.
-    let (generated, ()) = futures_util::future::join(provider.stream_chat(request, tx), async {
-        while let Some(chunk) = rx.recv().await {
-            for event in gate.scanner.push(&chunk) {
-                gate.handle(event, &fragments, emit);
-            }
-        }
-    })
-    .await;
-
-    let raw = match generated {
-        Ok(raw) => raw,
-        Err(err) => {
-            emit(AnswerEvent::Failed {
-                message: err.to_string(),
-            });
+        let fragments = self.retrieve(project_id, question)?;
+        if fragments.is_empty() {
+            emit(unsupported_event(Unsupported::NoContext, style));
             return Ok(());
         }
-    };
 
-    // Veredicto definitivo sobre la respuesta completa. El del streaming solo servia para
-    // decidir si se podia ir ensenando.
-    let parsed = match answer::parse(&raw) {
-        Ok(parsed) => parsed,
-        Err(err) => {
-            emit(AnswerEvent::Failed {
-                message: err.to_string(),
-            });
-            return Ok(());
-        }
-    };
+        emit(self.retrieved_event(&fragments));
 
-    match verify::verify(&parsed, &fragments) {
-        Verdict::Supported { citations, dropped } => {
-            emit(AnswerEvent::Completed {
+        let raw = match self.generate(question, style, &fragments, emit).await {
+            Ok(raw) => raw,
+            Err(err) => return emit_failure(err, emit),
+        };
+
+        // Veredicto definitivo sobre la respuesta completa. El del streaming solo servia
+        // para decidir si se podia ir ensenando.
+        let parsed = match answer::parse(&raw) {
+            Ok(parsed) => parsed,
+            Err(err) => return emit_failure(err, emit),
+        };
+
+        match verify::verify(&parsed, &fragments) {
+            Verdict::Supported { citations, dropped } => emit(AnswerEvent::Completed {
                 answer: parsed.answer,
                 key_points: parsed.key_points,
                 follow_ups: parsed.follow_ups,
                 citations,
                 dropped,
                 elapsed_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
-            });
+            }),
+            Verdict::Unsupported(reason) => {
+                log::info!("respuesta descartada por falta de respaldo: {reason:?}");
+                emit(unsupported_event(reason, style));
+            }
         }
-        Verdict::Unsupported(reason) => {
-            log::info!("respuesta descartada por §6: {reason:?}");
-            emit(unsupported_event(reason, style));
+
+        Ok(())
+    }
+
+    fn retrieve(&self, project_id: i64, question: &str) -> AppResult<FragmentSet> {
+        let retrieval =
+            Retriever::new(self.db, self.embedder).search(project_id, question, DEFAULT_TOP_K)?;
+
+        Ok(FragmentSet::from_retrieval(&retrieval.chunks))
+    }
+
+    /// Se emite antes de llamar a nadie: en modo nube, es lo que el usuario tiene derecho
+    /// a saber que sale de su equipo.
+    fn retrieved_event(&self, fragments: &FragmentSet) -> AnswerEvent {
+        let description = self.provider.describe();
+
+        AnswerEvent::Retrieved {
+            fragments: fragments
+                .all()
+                .iter()
+                .map(|fragment| FragmentSummary {
+                    number: fragment.number,
+                    document_title: fragment.document_title.clone(),
+                    preview: preview_of(&fragment.text),
+                })
+                .collect(),
+            sent_to: if description.sends_data_outside {
+                description.endpoint
+            } else {
+                String::new()
+            },
         }
     }
 
+    /// Genera y va soltando por `emit` el texto que la compuerta deja pasar. Devuelve la
+    /// respuesta completa en crudo, que es sobre la que se dicta el veredicto final.
+    async fn generate(
+        &self,
+        question: &str,
+        style: AnswerStyle,
+        fragments: &FragmentSet,
+        emit: &mut (dyn FnMut(AnswerEvent) + Send),
+    ) -> AppResult<String> {
+        let request = ChatRequest {
+            messages: prompt::build(question, style, fragments),
+            temperature: self.settings.temperature,
+            max_tokens: self.settings.max_tokens,
+            json_mode: self.settings.json_mode,
+        };
+
+        let (tx, mut rx) = unbounded_channel();
+        let mut gate = Gate::default();
+
+        // Las dos mitades corren a la vez: una habla con el servidor y la otra va sacando
+        // campos del JSON segun llegan. Sin esto no hay streaming, solo espera.
+        let (generated, ()) =
+            futures_util::future::join(self.provider.stream_chat(request, tx), async {
+                while let Some(chunk) = rx.recv().await {
+                    for event in gate.scanner.push(&chunk) {
+                        gate.handle(event, fragments, emit);
+                    }
+                }
+            })
+            .await;
+
+        generated
+    }
+}
+
+/// Un fallo del proveedor o un JSON ilegible no son un error de la aplicacion: son algo
+/// que contarle al usuario. Por eso se emiten y se devuelve `Ok`.
+fn emit_failure(err: AppError, emit: &mut (dyn FnMut(AnswerEvent) + Send)) -> AppResult<()> {
+    emit(AnswerEvent::Failed {
+        message: err.to_string(),
+    });
     Ok(())
 }
 

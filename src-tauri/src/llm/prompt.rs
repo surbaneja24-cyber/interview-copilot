@@ -1,4 +1,13 @@
-//! Construccion del prompt (§8) y numeracion de los fragmentos recuperados.
+//! Construccion del prompt y numeracion de los fragmentos recuperados.
+//!
+//! Dos decisiones que el codigo de abajo no explica por si solo, razonadas en
+//! `docs/ARCHITECTURE.md` seccion 5:
+//!
+//! - Los fragmentos se numeran 1..k, no con su identificador de la base de datos. Asi
+//!   cualquier numero fuera de rango es inequivocamente una referencia inventada, y el
+//!   identificador interno no sale del equipo.
+//! - El prompt fija el orden de los campos de la respuesta con las citas primero. Eso es
+//!   lo que permite verificar mientras el modelo todavia escribe.
 //!
 //! **Por que los fragmentos se numeran 1..k y no se usan los identificadores de la base.**
 //! El modelo tiene que devolver a que fragmento apunta cada afirmacion. Si se le dieran

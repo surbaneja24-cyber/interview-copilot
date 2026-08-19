@@ -1,4 +1,13 @@
-//! Proveedor simulado. **Solo existe en compilaciones de desarrollo.**
+//! Proveedor simulado, solo en compilaciones de desarrollo.
+//!
+//! No usa ninguna IA: fabrica una respuesta con el formato correcto a partir de los
+//! propios fragmentos recuperados. Sirve para recorrer la ruta completa sin instalar
+//! nada, y para provocar a voluntad el caso de "no hay experiencia que citar" —basta con
+//! empezar la pregunta por `!`.
+//!
+//! Va detras de `#[cfg(debug_assertions)]` porque un proveedor que devuelve texto
+//! plausible sin haber consultado nada no puede acabar en manos de nadie en mitad de una
+//! entrevista.
 //!
 //! No usa ninguna IA: fabrica una respuesta con el formato de §8 a partir de los propios
 //! fragmentos que se le pasan. Sirve para dos cosas concretas:

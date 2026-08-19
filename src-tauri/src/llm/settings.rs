@@ -1,4 +1,7 @@
-//! Ajustes del LLM: que proveedor, que modelo y con que parametros (§19 del spec).
+//! Ajustes del LLM: proveedor, modelo y parametros de generacion.
+//!
+//! Aqui no hay ninguna clave de API. Viven en el almacen de credenciales del sistema,
+//! ver `crate::secrets`.
 //!
 //! **Aqui no hay ninguna clave de API.** Las claves viven en el almacen de credenciales
 //! del sistema (ver `crate::secrets`), no en la base de datos, porque la base se copia,

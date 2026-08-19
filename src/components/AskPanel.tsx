@@ -184,7 +184,7 @@ export function AskPanel({ projectId }: { readonly projectId: number | null }) {
 
       {state.status === 'unsupported' && (
         <>
-          <p className="notice notice--warn">⚠ {state.explanation}</p>
+          <p className="notice notice--warn">{state.explanation}</p>
           <h3>Cómo estructurar la respuesta tú</h3>
           <ul className="reasons">
             {state.structure.map((step) => (

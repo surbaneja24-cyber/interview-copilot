@@ -1,4 +1,10 @@
-//! Claves de API, fuera de la base de datos (§31 del spec).
+//! Claves de API, en el almacen de credenciales del sistema y no en la base de datos.
+//!
+//! La base se copia, se adjunta en informes de errores y se borra entera con un boton;
+//! una clave no debe viajar por ninguno de esos caminos.
+//!
+//! Regla que lo sostiene: no existe ningun comando que devuelva una clave al frontend.
+//! Solo se puede poner una, borrarla, o preguntar si hay alguna.
 //!
 //! Se guardan en el almacen de credenciales del sistema —en Windows, el Administrador de
 //! credenciales— y no en el fichero SQLite. La razon no es esoterica: ese fichero se

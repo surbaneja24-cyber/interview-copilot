@@ -1,4 +1,10 @@
-//! Providers de LLM (§18 del spec).
+//! Providers de LLM.
+//!
+//! Todos hablan por HTTP, incluido el local: el modelo corre en `llama-server` o en
+//! Ollama, fuera del proceso. Ver `docs/ARCHITECTURE.md` seccion 2.
+//!
+//! Cada provider implementa solo `stream_chat`; `generate` se construye encima
+//! descartando los tokens intermedios, para que las dos rutas no puedan divergir.
 //!
 //! Los tres providers —local, OpenAI y cualquiera que venga despues— hablan el mismo
 //! protocolo y comparten el mismo cliente HTTP. Ni siquiera el local se enlaza dentro del

@@ -1,5 +1,8 @@
 //! Cliente HTTP compartido por todos los providers.
 //!
+//! Ollama, `llama-server` y api.openai.com exponen la misma API de chat, asi que hay un
+//! solo cliente y un solo parseo de Server-Sent Events.
+//!
 //! Los tres hablan la API de chat de OpenAI: Ollama y `llama-server` la exponen igual que
 //! api.openai.com. Un solo cliente, un solo parseo de SSE, un solo sitio donde arreglar
 //! los errores de red.

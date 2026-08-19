@@ -1,4 +1,18 @@
-//! Verificacion de citas: la implementacion de §6.
+//! Verificacion de citas: la regla de que la IA no invente experiencia del candidato.
+//!
+//! Un umbral sobre la similitud del retriever se midio y no funciona; no se reabre sin
+//! volver a medir (`docs/ARCHITECTURE.md` seccion 5). Lo que si es comprobable:
+//!
+//! 1. El fragmento citado tiene que ser uno de los que se enviaron.
+//! 2. El texto citado tiene que estar literalmente dentro de ese fragmento.
+//!
+//! La segunda condicion es la que aguanta el peso: con cinco fragmentos numerados, un
+//! modelo que inventa escribe igualmente `"fragment": 1`, pero no puede producir una
+//! copia literal de un documento que no dice lo que el afirma.
+//!
+//! Lo que esto no garantiza: que el fragmento citado respalde *lo que la respuesta
+//! afirma*. Contra eso no hay comprobacion mecanica, solo que la UI ensena la cita al
+//! lado de la respuesta.
 //!
 //! El requisito es que la IA no invente experiencia del candidato. El intento anterior
 //! —un umbral sobre la similitud del retriever— se midio y **no funciona**: las nubes de

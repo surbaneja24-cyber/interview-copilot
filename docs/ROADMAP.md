@@ -61,6 +61,7 @@ ya contada como RAM. Está fijado en un test de regresión.
 - [x] Pipeline de indexado: documento → chunks → embeddings → índice
 - [x] Buscador manual sobre el índice, para poder verificar la calidad del retrieval
 - [x] Carga perezosa del modelo de embeddings y liberación manual (~1 GB)
+- [x] Datos de contacto fuera del índice (§31), medido contra el CV real
 - [ ] Formularios de Candidate Profile y Job Profile (§5) — los documentos ya cubren el
       caso principal; los campos estructurados quedan para cuando el generador los use
 
@@ -80,9 +81,13 @@ la que debería. Queda **pendiente y consciente**:
   real dio 68 letras sueltas sobre 417 palabras. Hay detección que rechaza el fichero y
   pide .docx, pero la solución de fondo es cambiar a PDFium, lo que implica distribuir una
   biblioteca nativa con la aplicación.
-- **Datos de contacto en el índice.** Nombre, teléfono y correo se indexan como un
-  fragmento más. Nunca responden a una pregunta de entrevista y §31 pide no mostrar datos
-  personales innecesarios.
+**Cerrado el 2026-08-19: los datos de contacto ya no entran en el índice.** Correos,
+teléfonos y URLs de perfil se quitan antes de trocear (`rag/contact.rs`), y la UI dice
+cuántos dejó fuera. La regla hubo que corregirla dos veces contra el CV real —primero
+tiraba líneas enteras y dejaba el correo dentro; luego se topó con que `pdf-extract` parte
+el correo por el espacio— y el detalle está en `ARCHITECTURE.md` §3.2. Sigue sin
+detectarse un nombre suelto, y eso es deliberado: ninguna regla separa "SANTIAGO URBANEJA"
+de "EXPERIENCIA LABORAL" sin llevarse por delante los encabezados de sección.
 
 Tres cosas que costaron más de lo previsto y conviene no repetir:
 
@@ -224,3 +229,11 @@ No hay tests de UI hasta la Fase 8. Sí desde el primer día en: chunking, retri
 umbrales, clasificador de preguntas, parseo de respuestas del LLM, migraciones de base de
 datos y detección de hardware. Es la parte donde un fallo silencioso pasa desapercibido y
 degrada las respuestas sin que nadie se entere.
+
+Las migraciones se prueban **sobre una base que ya existe**, no solo creando una nueva: una
+base en v2 con proyectos, documentos y trozos dentro tiene que llegar a v3 con todo, y
+cualquier versión antigua tiene que acabar con el mismo esquema que una base recién creada.
+Ese segundo test recorre todas las versiones, así que una migración futura que se olvide de
+un índice lo rompe sin que nadie tenga que acordarse de ampliarlo. Los dos se comprobaron
+rompiendo la migración a propósito antes de darlos por buenos: un test de migración que
+nunca ha fallado no ha demostrado nada.

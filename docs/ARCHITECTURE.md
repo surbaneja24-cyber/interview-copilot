@@ -169,6 +169,46 @@ El solape existe para no partir una idea continua por la mitad. Entre dos seccio
 
 Ambas salieron de un test de extremo a extremo con el modelo real, no de razonar sobre el papel. Los tests de troceado con datos inventados pasaban perfectamente mientras el defecto estaba ahí.
 
+## 3.2 Los datos de contacto no entran en el índice
+
+§31 pide no pasear datos personales por la pantalla, y hasta ahora la cabecera del CV
+—teléfono, correo, perfiles— se troceaba como un fragmento más. El coste no es teórico:
+son cinco fragmentos los que se le mandan al modelo en cada pregunta, y uno de ellos se
+lo llevaba un dato que no responde a ninguna entrevista.
+
+Se limpia en `rag/contact.rs`, **antes de trocear y sobre las líneas del documento**. Después
+de `chunking::normalize` los saltos simples ya son espacios, y para entonces el teléfono y
+la primera sección del CV son el mismo párrafo. El documento se guarda entero: lo que se
+recorta es lo que se indexa, que es lo único que puede acabar en pantalla y en el prompt.
+
+La regla se escribió dos veces, y las dos correcciones salieron de medir contra el CV real
+en vez de razonar sobre un CV imaginario:
+
+1. **Primera versión: tirar la línea entera si era solo contacto.** Sobre el CV real quitó
+   exactamente una línea, el teléfono, y dejó el correo dentro. `pdf-extract` había puesto
+   nombre, puesto, correo y ciudad en la misma línea, así que la línea tenía contenido de
+   sobra y se salvaba con el correo dentro.
+2. **Segunda versión: quitar el dato, no la línea** —y tirar la línea solo cuando lo que
+   queda no llega a cuatro palabras. Seguía sin funcionar: el extractor parte el correo por
+   el espacio y devuelve `usuario @dominio.com`, dos piezas de las que ninguna es un correo
+   por separado.
+
+La versión que sí funciona reconoce las dos mitades y las junta. Medido sobre el CV real:
+dos datos fuera (correo y teléfono), 8 fragmentos antes y 8 después, y el primero deja de
+contener datos de contacto. El número se enseña en la UI al terminar de indexar, igual que
+las citas descartadas de §5: es el único dato con el que juzgar si el filtro quita de más.
+
+**Lo que no detecta, y por eso esto no es un anonimizador:** un nombre suelto en su línea.
+Ninguna regla mecánica separa "SANTIAGO URBANEJA" de "EXPERIENCIA LABORAL" —las dos son
+cortas, en mayúsculas y sin punto final— e intentarlo se llevaría por delante los
+encabezados de sección, que son la frontera semántica más fuerte de un CV. Tampoco una
+dirección postal sin etiqueta. Lo que hace es sacar del índice lo que una máquina reconoce
+sin margen de duda: correos, teléfonos de nueve dígitos o más y URLs de perfil.
+
+La distinción entre `github.com/santiago` y `github.com/santiago/proyecto` está puesta a
+propósito: el primero es un dato de contacto y el segundo es un proyecto del candidato,
+que es justo lo que hay que indexar.
+
 ## 4. El pipeline en vivo, y dónde se gana la latencia
 
 ```

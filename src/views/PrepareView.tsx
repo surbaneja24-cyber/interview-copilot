@@ -65,7 +65,11 @@ export function PrepareView() {
           setMessage(
             `Indexado en ${String(report.chunks)} fragmentos${
               report.reindexedFromScratch ? ' (se rehízo el índice: cambió el modelo)' : ''
-            }.`,
+            }.${
+              report.contactDataRemoved > 0
+                ? ` ${String(report.contactDataRemoved)} datos de contacto se quedaron fuera del índice.`
+                : ''
+            }`,
           );
           documents.reload();
         });

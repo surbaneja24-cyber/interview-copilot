@@ -78,6 +78,11 @@ export interface IndexReport {
   readonly chunks: number;
   /** El modelo de embeddings cambió y hubo que rehacer el índice entero. */
   readonly reindexedFromScratch: boolean;
+  /**
+   * Correos, teléfonos y perfiles que se quedaron fuera del índice (§31). Se enseña:
+   * es el único dato con el que juzgar si el filtro quita de más o de menos.
+   */
+  readonly contactDataRemoved: number;
 }
 
 export interface RetrievedChunk {

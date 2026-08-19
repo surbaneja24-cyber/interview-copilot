@@ -5,7 +5,7 @@
 
 use crate::embedding::EmbeddingProvider;
 use crate::error::AppResult;
-use crate::rag::{chunking, vector_store};
+use crate::rag::{chunking, contact, vector_store};
 use crate::storage::{Db, NewDocument};
 
 /// Cuantos trozos se embeben de una vez. Lotes grandes van mas rapido pero reservan mas
@@ -24,6 +24,10 @@ pub struct IndexReport {
     pub chunks: usize,
     /// Verdadero si hubo que tirar el indice porque cambio el modelo de embeddings.
     pub reindexed_from_scratch: bool,
+    /// Datos de contacto —correos, telefonos, perfiles— que no llegaron al indice (§31).
+    /// Se enseña en la UI: es el unico dato con el que juzgar si la regla quita de mas o
+    /// de menos.
+    pub contact_data_removed: usize,
 }
 
 impl<'a> Indexer<'a> {
@@ -65,13 +69,20 @@ impl<'a> Indexer<'a> {
         let reindexed = self.ensure_index_matches_model()?;
 
         let document = self.db.create_document(new)?;
-        let chunks = chunking::split(&new.content);
+
+        // El documento se guarda entero y se indexa sin los datos de contacto (§31). Lo
+        // que se guarda es del usuario y no hay por que recortarselo; lo que se indexa es
+        // lo que puede acabar en pantalla y en el prompt, y ahi un telefono solo gasta
+        // uno de los cinco huecos.
+        let cleaned = contact::strip(&new.content);
+        let chunks = chunking::split(&cleaned.text);
 
         if chunks.is_empty() {
             return Ok(IndexReport {
                 documents: 1,
                 chunks: 0,
                 reindexed_from_scratch: reindexed,
+                contact_data_removed: cleaned.removed,
             });
         }
 
@@ -82,16 +93,20 @@ impl<'a> Indexer<'a> {
         let texts: Vec<String> = chunks.iter().map(|chunk| chunk.text.clone()).collect();
         self.embed_and_store(&ids, &texts)?;
 
+        // Se registra cuantas lineas se dejaron fuera, nunca cuales: un log es un fichero
+        // que se copia y se adjunta en un informe de errores (§31).
         log::info!(
-            "documento \"{}\" indexado en {} trozos",
+            "documento \"{}\" indexado en {} trozos, {} datos de contacto fuera",
             document.title,
-            chunks.len()
+            chunks.len(),
+            cleaned.removed
         );
 
         Ok(IndexReport {
             documents: 1,
             chunks: chunks.len(),
             reindexed_from_scratch: reindexed,
+            contact_data_removed: cleaned.removed,
         })
     }
 
@@ -106,6 +121,8 @@ impl<'a> Indexer<'a> {
                 documents: 0,
                 chunks: 0,
                 reindexed_from_scratch: reindexed,
+                // Los trozos pendientes ya pasaron por el filtro al darlos de alta.
+                contact_data_removed: 0,
             });
         }
 
@@ -117,6 +134,7 @@ impl<'a> Indexer<'a> {
             documents: 0,
             chunks: ids.len(),
             reindexed_from_scratch: reindexed,
+            contact_data_removed: 0,
         })
     }
 
@@ -239,6 +257,44 @@ mod tests {
                 .is_empty(),
             "no deberia quedar ningun trozo sin vector"
         );
+    }
+
+    /// §31: la cabecera de un CV no llega al indice. No es cosmetico — un fragmento con
+    /// el telefono ocupa uno de los cinco que se le mandan al modelo en cada pregunta.
+    #[test]
+    fn los_datos_de_contacto_no_llegan_al_indice() {
+        let f = fixture();
+        let embedder = FakeEmbedder {
+            id: "fake",
+            dimensions: 8,
+        };
+
+        let report = Indexer::new(&f.db, &embedder)
+            .add_document(&documento(
+                f.project_id,
+                "CV",
+                "SANTIAGO URBANEJA
+                 Teléfono: 600 123 456
+                 correo@ejemplo.com
+
+                 EXPERIENCIA
+                 Lideré la migración de un monolito PHP a microservicios en Node durante                  seis meses, coordinando a cuatro personas del equipo de plataforma.",
+            ))
+            .expect("indexar");
+
+        assert_eq!(report.contact_data_removed, 2);
+
+        let indexado = f
+            .db
+            .with_conn(|conn| {
+                let mut stmt = conn.prepare("SELECT text FROM chunks WHERE project_id = ?1")?;
+                let rows = stmt.query_map([f.project_id], |row| row.get::<_, String>(0))?;
+                Ok(rows.collect::<Result<Vec<_>, _>>()?.join(" "))
+            })
+            .expect("leer trozos");
+        assert!(!indexado.contains("600"), "el telefono llego al indice: {indexado}");
+        assert!(!indexado.contains('@'), "el correo llego al indice: {indexado}");
+        assert!(indexado.contains("Lideré la migración"));
     }
 
     #[test]

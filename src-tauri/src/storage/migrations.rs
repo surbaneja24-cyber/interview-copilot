@@ -69,10 +69,20 @@ const MIGRATIONS: &[&str] = &[
 ];
 
 pub fn run(conn: &Connection) -> AppResult<()> {
+    run_to(conn, MIGRATIONS.len())
+}
+
+/// Aplica las migraciones que falten hasta `target`.
+///
+/// El parametro existe para los tests: es la unica forma de fabricar una base en una
+/// version antigua **con el mismo SQL que se publico**, que es lo que hay que migrar de
+/// verdad. Copiar el esquema viejo en el test comprobaria que la migracion funciona sobre
+/// una base que nunca ha existido.
+fn run_to(conn: &Connection, target: usize) -> AppResult<()> {
     let current: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     let current = usize::try_from(current).unwrap_or(0);
 
-    for (index, sql) in MIGRATIONS.iter().enumerate().skip(current) {
+    for (index, sql) in MIGRATIONS.iter().enumerate().take(target).skip(current) {
         let version = index + 1;
         log::info!("aplicando migracion v{version}");
         conn.execute_batch(sql)?;
@@ -95,3 +105,129 @@ pub const USER_DATA_TABLES: &[&str] = &[
     "settings",
     "projects",
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::Db;
+
+    fn user_version(conn: &Connection) -> usize {
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("leer user_version");
+        usize::try_from(version).expect("version no negativa")
+    }
+
+    /// Esquema completo tal y como lo ve SQLite: tablas, indices y su SQL.
+    fn schema(conn: &Connection) -> Vec<(String, String, Option<String>)> {
+        let mut stmt = conn
+            .prepare(
+                "SELECT type, name, sql FROM sqlite_master
+                 WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name",
+            )
+            .expect("leer sqlite_master");
+        let rows = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .expect("recorrer sqlite_master");
+        rows.collect::<Result<Vec<_>, _>>().expect("filas")
+    }
+
+    /// El caso que de verdad importa: una base que ya existe en el equipo de alguien, con
+    /// sus datos dentro, y que al abrir la version nueva de la app tiene que migrarse sin
+    /// perder nada. Una migracion que falla aqui no da error: deja la app medio rota y no
+    /// se nota hasta mucho despues.
+    #[test]
+    fn una_base_en_v2_con_datos_llega_a_v3_sin_perderlos() {
+        let dir = tempfile::tempdir().expect("directorio temporal");
+        let path = dir.path().join("vieja.db");
+
+        {
+            let conn = Connection::open(&path).expect("crear la base vieja");
+            conn.execute_batch("PRAGMA foreign_keys = ON;")
+                .expect("claves ajenas");
+            run_to(&conn, 2).expect("dejarla en v2");
+            assert_eq!(user_version(&conn), 2);
+            assert!(
+                conn.execute_batch("SELECT 1 FROM settings;").is_err(),
+                "en v2 la tabla settings no existe todavia: si existe, esta base no es v2"
+            );
+
+            conn.execute_batch(
+                "INSERT INTO projects (id, name, company, role)
+                 VALUES (1, 'Supply Rodamientos — Mozo', 'Supply Rodamientos', 'Mozo de almacén');
+                 INSERT INTO documents (id, project_id, title, kind, content)
+                 VALUES (1, 1, 'cv.pdf', 'cv', 'Carnet de carretillero en vigor.');
+                 INSERT INTO chunks (document_id, project_id, ordinal, text, start_offset, end_offset)
+                 VALUES (1, 1, 0, 'Carnet de carretillero en vigor.', 0, 32);
+                 INSERT INTO index_meta (id, model_id, dimensions)
+                 VALUES (1, 'multilingual-e5-base', 768);",
+            )
+            .expect("meter datos de usuario");
+        }
+
+        let db = Db::open(&path).expect("abrir con la version nueva");
+
+        let version = db
+            .with_conn(|conn| Ok(user_version(conn)))
+            .expect("leer version");
+        assert_eq!(version, MIGRATIONS.len(), "la base no llego a la ultima version");
+
+        let projects = db.list_projects().expect("listar proyectos");
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].company, "Supply Rodamientos");
+
+        let documents = db.list_documents(1).expect("listar documentos");
+        assert_eq!(documents.len(), 1);
+        assert_eq!(
+            documents[0].chunk_count, 1,
+            "los trozos indexados no sobrevivieron a la migracion"
+        );
+        assert_eq!(
+            db.index_model().expect("modelo del indice"),
+            Some(("multilingual-e5-base".to_owned(), 768)),
+            "la base perdio con que modelo se construyo el indice: se reindexaria entero"
+        );
+
+        // Y lo que trae v3 tiene que funcionar, no solo existir.
+        db.save_settings("prueba", &"valor").expect("guardar ajuste");
+        assert_eq!(
+            db.load_settings::<String>("prueba").expect("leer ajuste"),
+            Some("valor".to_owned())
+        );
+    }
+
+    /// Migrar desde cualquier version tiene que dejar exactamente el mismo esquema que
+    /// crear la base de cero. Recorre todas las versiones, asi que una migracion nueva
+    /// que se olvide de un indice rompe este test sin tener que acordarse de ampliarlo.
+    #[test]
+    fn una_base_vieja_acaba_igual_que_una_recien_creada() {
+        let nueva = Connection::open_in_memory().expect("base en memoria");
+        run(&nueva).expect("migrar de cero");
+        let esperado = schema(&nueva);
+
+        for desde in 0..MIGRATIONS.len() {
+            let vieja = Connection::open_in_memory().expect("base en memoria");
+            run_to(&vieja, desde).expect("dejarla en una version antigua");
+            run(&vieja).expect("migrar hasta la ultima");
+
+            assert_eq!(user_version(&vieja), MIGRATIONS.len());
+            assert_eq!(
+                schema(&vieja),
+                esperado,
+                "una base que venia de v{desde} no acabo con el esquema de una nueva"
+            );
+        }
+    }
+
+    /// Volver a migrar una base que ya esta al dia no puede tocar nada. Es lo que ocurre
+    /// en cada arranque de la aplicacion.
+    #[test]
+    fn migrar_dos_veces_no_cambia_nada() {
+        let conn = Connection::open_in_memory().expect("base en memoria");
+        run(&conn).expect("primera pasada");
+        let antes = schema(&conn);
+        run(&conn).expect("segunda pasada");
+        assert_eq!(schema(&conn), antes);
+        assert_eq!(user_version(&conn), MIGRATIONS.len());
+    }
+}

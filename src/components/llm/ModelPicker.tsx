@@ -31,7 +31,7 @@ export function ModelPicker({ settings, onEdit, onPersist }: Props) {
     setError(null);
   }, [settings.kind]);
 
-  const onLoadModels = useCallback(() => {
+  const load = useCallback(() => {
     setBusy(true);
     setError(null);
     setMessage(null);
@@ -47,6 +47,13 @@ export function ModelPicker({ settings, onEdit, onPersist }: Props) {
         setBusy(false);
       });
   }, []);
+
+  // Sin modelo elegido no hay nada que preguntar todavía, así que se pide la lista sola.
+  // Es el caso de estrenar el proveedor local: la alternativa era inventar una etiqueta,
+  // y eso acababa en un 404 en la primera pregunta.
+  useEffect(() => {
+    if (settings.model === '') load();
+  }, [settings.model, load]);
 
   return (
     <>
@@ -65,6 +72,11 @@ export function ModelPicker({ settings, onEdit, onPersist }: Props) {
 
       <label>
         Modelo
+        {settings.model === '' && models === null && !busy && (
+          <span className="muted small">
+            Elige uno de los que tenga tu servidor.
+          </span>
+        )}
         {models === null ? (
           <input
             value={settings.model}
@@ -96,7 +108,7 @@ export function ModelPicker({ settings, onEdit, onPersist }: Props) {
         )}
       </label>
 
-      <button type="button" className="btn btn--ghost" disabled={busy} onClick={onLoadModels}>
+      <button type="button" className="btn btn--ghost" disabled={busy} onClick={load}>
         {busy ? 'Consultando…' : 'Ver qué modelos ofrece el servidor'}
       </button>
 

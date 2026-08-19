@@ -266,7 +266,7 @@ fn hint_for(status: u16, detail: &str) -> &'static str {
 
     match status {
         401 | 403 => " Revisa la clave de API en Ajustes.",
-        404 => " Revisa la URL del servidor y que el modelo exista.",
+        404 => " Comprueba la URL y, en Ajustes, pulsa \"Ver qué modelos ofrece el                  servidor\" para elegir uno de los que tiene de verdad.",
         429 if mentions_billing(&detail) => {
             " No es un limite de ritmo: la cuenta se ha quedado sin saldo."
         }

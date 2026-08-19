@@ -38,8 +38,11 @@ export function defaultBaseUrl(kind: ProviderKind): string {
 
 export function defaultModel(kind: ProviderKind): string {
   switch (kind) {
+    // Vacío a propósito: un servidor local puede tener cualquier modelo con cualquier
+    // etiqueta. Inventar una daba un 404 en la primera pregunta. Se le pregunta al
+    // servidor, que es el único que lo sabe.
     case 'local':
-      return 'qwen2.5:3b-instruct';
+      return '';
     case 'open_ai':
       return 'gpt-4o-mini';
     case 'mock':

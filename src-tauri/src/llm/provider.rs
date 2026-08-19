@@ -97,9 +97,19 @@ impl LlmProvider for HttpProvider {
 mod tests {
     use super::*;
 
+    /// Ajustes locales con un modelo puesto. El defecto del proveedor local es **vacio** a
+    /// proposito —solo el servidor sabe que modelos tiene—, asi que un test que solo mira
+    /// como se tratan las claves tiene que elegir uno.
+    fn local_con_modelo() -> LlmSettings {
+        LlmSettings {
+            model: "un-modelo-cualquiera".into(),
+            ..LlmSettings::for_kind(ProviderKind::Local)
+        }
+    }
+
     #[test]
     fn el_proveedor_local_se_construye_sin_clave() {
-        let settings = LlmSettings::for_kind(ProviderKind::Local);
+        let settings = local_con_modelo();
         let provider = HttpProvider::from_settings(&settings, None).expect("construir");
         assert!(!provider.describe().sends_data_outside);
     }
@@ -125,7 +135,7 @@ mod tests {
     /// haber cambiado de proveedor sin limpiar el campo.
     #[test]
     fn la_clave_no_se_adjunta_a_un_servidor_local() {
-        let settings = LlmSettings::for_kind(ProviderKind::Local);
+        let settings = local_con_modelo();
         let provider =
             HttpProvider::from_settings(&settings, Some("sk-secreta".into())).expect("construir");
         assert!(provider.endpoint.api_key.is_none());

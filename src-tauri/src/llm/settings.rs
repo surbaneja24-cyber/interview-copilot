@@ -88,9 +88,13 @@ impl ProviderKind {
     /// y el usuario elige de ahi.
     pub fn default_model(self) -> &'static str {
         match self {
-            // Coincide con lo que recomienda el detector de hardware para 3 GB de
-            // presupuesto de memoria.
-            Self::Local => "qwen2.5:3b-instruct",
+            // **Vacio a proposito.** Aqui habia "qwen2.5:3b-instruct", que era una
+            // suposicion sobre la maquina de otro y fallaba con un 404 en la primera
+            // pregunta: la etiqueta instalada era "qwen2.5:3b-instruct-q4_K_M". Un
+            // servidor local puede tener cualquier modelo con cualquier etiqueta, y el
+            // unico que lo sabe es el servidor. Vacio obliga a preguntarselo, que es lo
+            // que la UI hace nada mas elegir este proveedor.
+            Self::Local => "",
             Self::OpenAi => "gpt-4o-mini",
             #[cfg(debug_assertions)]
             Self::Mock => "simulador",

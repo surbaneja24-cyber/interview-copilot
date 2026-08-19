@@ -704,11 +704,18 @@ impl LiveVad {
                             turn_audio.extend_from_slice(&frame);
                             collecting = true;
                         }
-                        Event::TurnEnded { .. } => {
+                        Event::TurnEnded { speech_ms } => {
                             collecting = false;
                             if let Some(sink) = turns.as_ref() {
+                                log::info!(
+                                    "turno de {speech_ms} ms cerrado ({:?}), a transcribir",
+                                    source
+                                );
                                 sink.submit(source, std::mem::take(&mut turn_audio));
                             } else {
+                                log::info!(
+                                    "turno de {speech_ms} ms cerrado, pero no hay transcriptor:                                      falta el modelo de whisper"
+                                );
                                 turn_audio.clear();
                             }
                         }

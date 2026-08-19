@@ -101,6 +101,7 @@ impl Transcriber {
                                 }
                             }
                             Err(err) => {
+                                log::warn!("no se pudo cargar el modelo de transcripcion: {err}");
                                 if let Ok(mut shared) = thread_shared.lock() {
                                     shared.error = Some(err.to_string());
                                     shared.pending = shared.pending.saturating_sub(1);
@@ -126,6 +127,10 @@ impl Transcriber {
                         shared.pending = shared.pending.saturating_sub(1);
                         match resultado {
                             Ok(text) if !text.is_empty() => {
+                                log::info!(
+                                    "transcritos {audio_ms} ms en {took_ms} ms: {} caracteres",
+                                    text.len()
+                                );
                                 shared.entries.push_back(Entry {
                                     source: job.source,
                                     text,
@@ -140,7 +145,7 @@ impl Transcriber {
                             // tos. No se apunta como fallo ni se ensena una linea vacia.
                             Ok(_) => log::info!("turno de {audio_ms} ms sin texto"),
                             Err(err) => {
-                                log::warn!("whisper falló: {err}");
+                                log::warn!("whisper fallo: {err}");
                                 shared.error = Some(err.to_string());
                             }
                         }

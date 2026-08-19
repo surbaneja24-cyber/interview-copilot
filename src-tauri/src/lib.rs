@@ -447,6 +447,17 @@ pub fn run() {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()
                         .level(log::LevelFilter::Info)
+                        // Los destinos se declaran a mano en vez de fiarse del defecto del
+                        // plugin: el fichero de log dejo de escribirse en algun momento y
+                        // eso costo una depuracion a ciegas. Un log que a veces esta es
+                        // peor que no tenerlo, porque se cuenta con el.
+                        .clear_targets()
+                        .target(tauri_plugin_log::Target::new(
+                            tauri_plugin_log::TargetKind::Stdout,
+                        ))
+                        .target(tauri_plugin_log::Target::new(
+                            tauri_plugin_log::TargetKind::LogDir { file_name: None },
+                        ))
                         .build(),
                 )?;
             }

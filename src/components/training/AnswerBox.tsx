@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { startCapture, stopCapture, transcript } from '@/ipc/commands';
 import { describeError } from '@/hooks/useAsync';
+import type { TranscriptState } from '@/ipc/types';
 
 interface Props {
   readonly onSave: (answer: string) => void;
@@ -25,6 +26,9 @@ export function AnswerBox({ onSave, onCancel }: Props) {
   const [text, setText] = useState('');
   const [dictating, setDictating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // El estado del transcriptor, para no dejar al usuario mirando un "Escuchando" que no
+  // dice si el modelo esta cargando, si hay turnos en cola o si algo ha fallado.
+  const [state, setState] = useState<TranscriptState | null>(null);
   const timer = useRef<number | null>(null);
   // Cuántos turnos había antes de empezar: lo que llegue después es esta respuesta.
   const before = useRef(0);
@@ -53,6 +57,7 @@ export function AnswerBox({ onSave, onCancel }: Props) {
         timer.current = window.setInterval(() => {
           transcript()
             .then((current) => {
+              setState(current);
               if (current === null) return;
               const nuevos = current.entries.slice(before.current);
               if (nuevos.length === 0) return;
@@ -86,10 +91,24 @@ export function AnswerBox({ onSave, onCancel }: Props) {
       />
 
       {dictating && (
-        <p className="muted small">
-          Escuchando. El texto aparece cuando terminas de hablar, no mientras hablas: hacen
-          falta 700 ms de silencio para dar la frase por acabada.
-        </p>
+        <>
+          <p className="muted small">
+            Escuchando. El texto aparece cuando terminas de hablar, no mientras hablas: hacen
+            falta 700 ms de silencio para dar la frase por acabada.
+          </p>
+          <p className="muted small">
+            {state === null
+              ? 'Sin transcriptor: falta descargar un modelo de voz en Ajustes → Audio.'
+              : [
+                  state.model,
+                  state.loaded ? 'modelo cargado' : 'cargando el modelo…',
+                  state.pending > 0 ? `${String(state.pending)} turnos en cola` : null,
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
+          </p>
+          {state?.error != null && <p className="error">{state.error}</p>}
+        </>
       )}
 
       <div className="model__actions">

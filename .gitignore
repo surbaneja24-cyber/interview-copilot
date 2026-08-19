@@ -1,0 +1,16 @@
+node_modules/
+dist/
+src-tauri/target/
+*.local
+
+# Nunca deben entrar en el repo: datos del usuario, modelos y claves (§15)
+*.db
+*.db-shm
+*.db-wal
+models/
+.env
+.env.*
+!.env.example
+
+.DS_Store
+Thumbs.db

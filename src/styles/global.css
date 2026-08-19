@@ -1,0 +1,447 @@
+/*
+ * Tokens en variables CSS a proposito: §19 pide que el usuario cambie tema, tamano de
+ * fuente y opacidad en caliente, y eso se hace escribiendo estas variables en :root
+ * desde la capa de settings, sin recompilar nada.
+ */
+:root {
+  --bg: #0f1115;
+  --bg-elevated: #171a21;
+  --border: #262b36;
+  --text: #e6e8ee;
+  --text-muted: #9aa1b1;
+  --accent: #5b8cff;
+
+  --font-size-base: 15px;
+  --font-ui:
+    system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-6: 1.5rem;
+}
+
+:root[data-theme='light'] {
+  --bg: #f7f8fa;
+  --bg-elevated: #ffffff;
+  --border: #dfe3ea;
+  --text: #14171f;
+  --text-muted: #5d6577;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--font-size-base);
+  line-height: 1.5;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.app__nav {
+  display: flex;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border);
+}
+
+.app__tab {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.app__tab:hover {
+  color: var(--text);
+}
+
+.app__tab--active {
+  border-color: var(--border);
+  background: var(--bg);
+  color: var(--text);
+}
+
+.app__main {
+  flex: 1;
+  padding: var(--space-6);
+  overflow-y: auto;
+}
+
+.app__main h1 {
+  margin: 0 0 var(--space-3);
+  font-size: 1.4rem;
+  font-weight: 600;
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.error {
+  color: #ff8080;
+}
+
+.card {
+  max-width: 62ch;
+  margin-bottom: var(--space-4);
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+}
+
+.card--danger {
+  border-color: #5c2b2b;
+}
+
+.card h2 {
+  margin: 0 0 var(--space-3);
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.card h3 {
+  margin: var(--space-4) 0 var(--space-2);
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.specs {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
+}
+
+.specs dt {
+  color: var(--text-muted);
+}
+
+.specs dd {
+  margin: 0;
+}
+
+.badge {
+  padding: 0.1em 0.5em;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.85em;
+}
+
+.reasons {
+  margin: var(--space-3) 0 0;
+  padding-left: 1.1rem;
+  color: var(--text-muted);
+}
+
+.reasons li {
+  margin-bottom: var(--space-2);
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  color: var(--text-muted);
+}
+
+.form input {
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+
+.btn {
+  align-self: flex-start;
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+
+.btn--ghost {
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.btn--danger {
+  background: #a33;
+}
+
+.projects {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.projects li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.projects li:last-child {
+  border-bottom: none;
+}
+
+.projects div {
+  display: flex;
+  flex-direction: column;
+}
+
+.row {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  margin-bottom: var(--space-3);
+}
+
+.row .btn {
+  align-self: auto;
+}
+
+.grow {
+  flex: 1;
+}
+
+select,
+input {
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+
+.small {
+  font-size: 0.85em;
+}
+
+.model__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.model__head h2 {
+  margin-bottom: 0.15rem;
+}
+
+.model__id {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+}
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.2rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+.status i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.status--on i {
+  background: #3fb950;
+  box-shadow: 0 0 0 3px rgb(63 185 80 / 18%);
+}
+
+.status--busy i {
+  background: #d29922;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+.model__detail {
+  margin: var(--space-3) 0 0;
+}
+
+.model__stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-3);
+  margin: var(--space-4) 0 0;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
+.model__stats dt {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.model__stats dd {
+  margin: 0.15rem 0 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.model__actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+.progress {
+  height: 8px;
+  margin: var(--space-3) 0 var(--space-2);
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+
+.progress__bar {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.4s ease;
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.results {
+  margin: var(--space-3) 0 0;
+  padding-left: 1.4rem;
+}
+
+.results li {
+  margin-bottom: var(--space-4);
+}
+
+.results p {
+  margin: 0.25rem 0 0;
+}
+
+.results__meta {
+  color: var(--text-muted);
+  font-size: 0.85em;
+}
+
+code {
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  background: var(--bg-elevated);
+  font-size: 0.9em;
+}
+
+/* Respuesta sugerida (§9). Se lee de un vistazo en mitad de una entrevista, asi que
+   pesa mas que el resto del texto de la tarjeta. */
+.answer {
+  margin: var(--space-4) 0 0;
+  padding: var(--space-3);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 6px 6px 0;
+  background: var(--bg);
+  font-size: 1.05em;
+}
+
+/* Mientras llega, el cursor deja claro que todavia se esta escribiendo. */
+.answer--streaming::after {
+  content: '▌';
+  color: var(--accent);
+  animation: pulse 1s steps(2) infinite;
+}
+
+.notice {
+  margin: var(--space-3) 0 0;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.92em;
+}
+
+.notice--cloud {
+  border-color: #3a5a8c;
+  background: rgb(91 140 255 / 8%);
+}
+
+.notice--warn {
+  border-color: #7a5a1f;
+  background: rgb(210 153 34 / 10%);
+}
+
+.citations {
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.citations li {
+  margin-bottom: var(--space-3);
+  padding-left: var(--space-3);
+  border-left: 2px solid var(--border);
+}
+
+.citations q {
+  display: block;
+  margin-top: 0.15rem;
+  color: var(--text);
+  font-style: italic;
+}
+
+.fragments {
+  margin-top: var(--space-4);
+}
+
+.fragments summary {
+  cursor: pointer;
+}

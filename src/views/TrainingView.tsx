@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react';
 import { savePreparedAnswer, trainingQuestions } from '@/ipc/commands';
 import { describeError, useAsync } from '@/hooks/useAsync';
 import { AnswerBox } from '@/components/training/AnswerBox';
+import { QuestionFlow } from '@/components/training/QuestionFlow';
 import type { QuestionKind, TrainingStatus } from '@/ipc/types';
 
 const KIND_LABELS: Record<QuestionKind, string> = {
@@ -24,8 +25,18 @@ const KIND_LABELS: Record<QuestionKind, string> = {
 export function TrainingView() {
   const questions = useAsync(trainingQuestions);
   const [open, setOpen] = useState<string | null>(null);
+  const [flow, setFlow] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  /** Guardar desde el modo diapositiva: la pantalla espera a que termine. */
+  const guardar = useCallback(
+    async (question: TrainingStatus, answer: string) => {
+      await savePreparedAnswer(question.text, answer, question.kind);
+      questions.reload();
+    },
+    [questions],
+  );
 
   const onSave = useCallback(
     (question: TrainingStatus, answer: string) => {
@@ -55,6 +66,22 @@ export function TrainingView() {
     : 0;
   const total = ready ? questions.state.value.length : 0;
 
+  if (flow && questions.state.status === 'ready') {
+    return (
+      <>
+        <h1>Entrenamiento</h1>
+        <QuestionFlow
+          questions={questions.state.value}
+          onAnswer={guardar}
+          onExit={() => {
+            setFlow(false);
+            questions.reload();
+          }}
+        />
+      </>
+    );
+  }
+
   return (
     <>
       <h1>Entrenamiento</h1>
@@ -72,6 +99,23 @@ export function TrainingView() {
             {answered} de {total} contestadas.
           </p>
         )}
+
+        <div className="model__actions">
+          <button
+            type="button"
+            className="btn"
+            disabled={!ready}
+            onClick={() => {
+              setFlow(true);
+            }}
+          >
+            {answered === 0 ? 'Empezar' : 'Seguir donde lo dejaste'}
+          </button>
+        </div>
+        <p className="muted small">
+          Te las va pasando de una en una, con el micrófono ya abierto: hablas y avanza sola.
+          Debajo tienes la lista entera por si prefieres ir a una concreta.
+        </p>
         {message !== null && <p className="muted small">{message}</p>}
         {error !== null && <p className="error">{error}</p>}
       </section>

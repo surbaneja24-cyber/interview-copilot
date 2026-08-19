@@ -290,6 +290,9 @@ ese material con sus palabras.
 - [x] Banco de preguntas de entrenamiento por tipo (§7), con una pista de qué debe llevar
       cada respuesta
 - [x] Responder por escrito o **dictando**, reutilizando micrófono, VAD y whisper
+- [x] Modo diapositiva: una pregunta a pantalla completa, el micrófono abierto solo y avance
+      automático al dejar de hablar. Contestar veinte preguntas no puede costar veinte
+      decisiones sobre cuál toca ahora ni veinte clics para abrir el micrófono
 - [x] Cada respuesta se indexa con su pregunta delante, medido contra el CV real
 - [ ] Preguntas generadas a partir de la oferta concreta, además del banco fijo
 - [ ] Peso por origen en la recuperación: una respuesta entrenada vale más que una línea del
@@ -297,6 +300,7 @@ ese material con sus palabras.
 - [ ] Huecos detectados: una pregunta sin material se convierte en la siguiente pregunta de
       entrenamiento (§13)
 - [ ] Respuesta instantánea para preguntas ya entrenadas, con el LLM adaptándola después
+- [ ] Las preguntas saltadas se guardan como huecos, hoy solo se enseñan al terminar (§13)
 
 - [ ] Clasificador de preguntas: reglas primero, LLM solo ante ambigüedad (§7)
 - [ ] Máquina de estados de la entrevista
@@ -321,6 +325,16 @@ ese material con sus palabras.
 **Hito:** compartir pantalla en Meet y comprobar en una segunda máquina qué se ve.
 
 ## Fase 7 — Práctica y análisis (MVP 2)
+
+Reutiliza el modo diapositiva del entrenamiento: mismo componente, reglas distintas. En
+entrenamiento la pista está a la vista y no corre el tiempo; en práctica se esconde, corre, y
+al final se pregunta por cada respuesta si se guarda como material — practicar acumula en vez
+de tirar lo que salió bien.
+
+**Lo que se puede puntuar hoy y lo que no.** Muletillas, duración y velocidad se miden aquí
+sin ningún modelo. Contenido, claridad, estructura y relevancia necesitan un LLM capaz, que
+en esta máquina no hay: se dan los números objetivos de verdad y el resto queda marcado como
+pendiente, en vez de inventar un porcentaje.
 
 - [ ] Entrevistador simulado con dificultad, tipo, puesto, duración e idioma
 - [ ] Respuesta por voz del usuario y transcripción

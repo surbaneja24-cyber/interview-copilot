@@ -363,8 +363,11 @@ input {
   font-variant-numeric: tabular-nums;
 }
 
+/* Se parte en varias lineas: en el modo diapositiva son tres botones y al estrechar la
+   ventana el ultimo se salia de la tarjeta. */
 .model__actions {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-2);
   margin-top: var(--space-4);
 }
@@ -586,4 +589,26 @@ code {
 .answer-box:focus {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
+}
+
+/*
+ * El modo diapositiva: una pregunta a pantalla completa. Mas ancha que una tarjeta de
+ * lectura porque aqui no se lee un parrafo, se contesta hablando y hay que ver la
+ * transcripcion entera de un vistazo.
+ */
+.slide {
+  max-width: 46rem;
+}
+
+.slide__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.slide__question {
+  margin: var(--space-4) 0 var(--space-2);
+  font-size: 1.35rem;
+  line-height: 1.35;
 }

@@ -14,6 +14,40 @@ El cuello de botella real no es ni siquiera la velocidad: es la RAM. App + STT +
 
 Esto no cambia el default del spec: el modo por defecto sigue siendo LOCAL. Lo que hace el detector de hardware es decir la verdad al usuario y recomendar el modo que su máquina puede sostener.
 
+## 0.1 El presupuesto de memoria, medido con todo dentro (2026-08-19)
+
+Hasta la Fase 4 cada pieza se había medido por separado y el total se sumaba a mano. Con
+las tres ya existiendo, se pueden cargar juntas en un proceso y mirar lo que pesan de
+verdad (`hardware/budget.rs`):
+
+| Paso | Residente | Incremento |
+|---|---|---|
+| Proceso vacío | 15 MB | — |
+| **+ embeddings (`multilingual-e5-base`)** | **1.750 MB** | **+1.735 MB** |
+| + una consulta | 1.753 MB | +3 MB |
+| + VAD (Silero) | 1.769 MB | +16 MB |
+| + whisper `base` | 1.914 MB | +145 MB |
+| tras transcribir | 1.680 MB | −234 MB (Windows recorta) |
+
+**El modelo de embeddings es el 90% del presupuesto.** §2.1 hablaba de "1 GB en disco" y de
+compensarlo cargándolo solo durante el indexado; el coste real en memoria es 1,7 GB, casi el
+doble, y el VAD y whisper juntos son 161 MB, o sea ruido a su lado.
+
+Consecuencias, y ninguna es cosmética:
+
+1. **Soltar el modelo de embeddings tras indexar deja de ser una elegancia y pasa a ser
+   obligatorio.** Ya está implementado (`release_embedder`) y ahora se sabe cuánto vale.
+2. **Durante la entrevista hay que volver a cargarlo**, porque la pregunta se embebe en
+   vivo, así que el suelo del pipeline en vivo son ~1,9 GB más la propia aplicación (261 MB
+   en desarrollo). En una máquina con 5,74 GB útiles y una videollamada abierta, eso es
+   justo. Falta medirlo con Meet corriendo, que es la prueba que importa.
+3. **Cambiar de modelo de embeddings a uno pequeño no es una opción**, y esto ya se midió:
+   `e5-small` acierta 2 de 6 preguntas frente a 6 de 6 (§2.1). Se paga la memoria o se
+   pierde la recuperación.
+
+El LLM local sumaría ~2 GB más, lo que confirma por tercera vez y ahora con cifras que en
+esta máquina el modo LOCAL en vivo no existe: el detector recomienda HYBRID y tiene razón.
+
 ## 1. Perfiles de ejecución
 
 | Modo | STT | LLM | Latencia esperada aquí | Uso |
@@ -438,6 +472,62 @@ Cuando empieza a llegar el texto de `answer`, las citas ya están completas y ya
 El resultado es que **nunca se muestra texto que luego haya que retirar**. Enseñar una experiencia inventada durante dos segundos y sustituirla después por un aviso sería peor que no enseñar nada: el candidato ya la ha leído.
 
 Al terminar el stream se vuelve a parsear la respuesta completa y se verifica otra vez. El veredicto del streaming solo decide si se puede ir mostrando; el final es el que manda. Hay un test que comprueba que los dos coinciden, porque el día que dejen de hacerlo el síntoma sería texto que aparece y desaparece.
+
+## 5.1 El entrenamiento previo: de dónde sale el material que la IA no puede inventar
+
+§5 pide preparar a la IA antes de la entrevista y §6 prohíbe que invente experiencia. Las
+dos frases son la misma cosa vista por los dos lados, y hasta la Fase 4 solo estaba
+implementado el lado prohibitivo: la cita verificada, que —medido— demuestra que el modelo
+leyó los documentos y no que la respuesta salga de ellos.
+
+**La garantía real no es un filtro más estricto: es tener material de verdad en el momento
+de la pregunta.** Y el material lo pone el candidato antes, contestando las preguntas que le
+van a hacer. Eso es el panel de entrenamiento.
+
+### Tres decisiones de diseño
+
+**Las respuestas no cuelgan de un proyecto.** Hasta v3 todo documento pertenecía a una
+entrevista, así que cada oferta nueva empezaba de cero. Desde v4, `project_id` admite NULL y
+NULL significa "es del candidato": el CV, las respuestas entrenadas y sus historias valen
+para todas las entrevistas, y el proyecto solo aporta la oferta concreta. Es lo que hace que
+esto mejore con el uso en vez de repetirse en cada entrevista.
+
+**Se guarda la pregunta junto a la respuesta**, en un solo párrafo, y cada trozo indexado
+lleva la pregunta delante. Las dos cosas salieron de medir, no de razonar:
+
+- Con la pregunta dentro, el parecido se mide **entre preguntas**, que es la tarea para la
+  que E5 está entrenado (§2.1) y donde de verdad funciona.
+- Con la pregunta y la respuesta en párrafos distintos, el troceador las separaba y el mejor
+  resultado de la búsqueda acababa siendo el fragmento que solo contiene la pregunta:
+  recuperaba de maravilla (0,93) y era inútil, porque al modelo le llegaba la pregunta que ya
+  sabía y no la respuesta que hacía falta.
+
+**Se contesta hablando o escribiendo.** Dictar no es un lujo: la respuesta dictada suena a
+cómo habla el candidato, y es esa forma de decirlo la que hace que la sugerencia en vivo
+suene humana en vez de a currículum leído. Además se contesta en un minuto lo que escribiendo
+cuesta cinco, y un banco de respuestas a medias no sirve de nada. Reutiliza entero el camino
+de la Fase 4: micrófono, VAD y whisper.
+
+### Lo que esto cambia, medido
+
+Con el modelo real, ante *"cuéntame una vez que tuviste un conflicto con un compañero"*:
+
+| Fragmento | Similitud |
+|---|---|
+| **La respuesta entrenada** | **0,8746** |
+| CV — competencias transversales | 0,7960 |
+| CV — experiencia laboral | 0,7614 |
+
+La respuesta entrenada gana por casi nueve centésimas, que para los márgenes de este corpus
+(§2.1 medía diferencias de 0,003 a 0,04) es una distancia enorme.
+
+Y hay un segundo efecto que no es evidente: **la cita literal deja de estorbar**. Citar
+palabra por palabra un CV telegráfico escrito en tercera persona es difícil, y por eso el
+filtro de §5 rechazaba respuestas buenas; citar la respuesta que el propio candidato dictó,
+no. El filtro pasa de ser una barrera a ser un seguro barato.
+
+Lo que **no** cambia: el modelo sigue pudiendo adornar lo que se le da. La cita verificada se
+queda como suelo. Lo que cambia es que ahora hay suelo y hay material.
 
 ## 6. Protección de captura (§26-33)
 

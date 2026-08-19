@@ -64,9 +64,12 @@ export type DocumentKind = (typeof DOCUMENT_KINDS)[number];
 
 export interface DocumentInfo {
   readonly id: number;
-  readonly projectId: number;
+  /** `null` cuando el documento es del candidato y vale para todas las entrevistas. */
+  readonly projectId: number | null;
   readonly title: string;
   readonly kind: DocumentKind;
+  /** Para una respuesta preparada, el tipo de pregunta que contesta. */
+  readonly tag: string | null;
   readonly sourcePath: string | null;
   readonly createdAt: string;
   /** Cero significa que entró pero no se indexó. */
@@ -287,4 +290,26 @@ export interface TranscriptState {
   readonly model: string;
   readonly loaded: boolean;
   readonly error: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Entrenamiento (§5)
+// ---------------------------------------------------------------------------
+
+export type QuestionKind =
+  | 'behavioral'
+  | 'motivation'
+  | 'experience'
+  | 'situational'
+  | 'selfAssessment'
+  | 'logistics';
+
+export interface TrainingStatus {
+  readonly id: string;
+  readonly kind: QuestionKind;
+  readonly text: string;
+  /** Qué tiene que llevar dentro una buena respuesta. */
+  readonly hint: string;
+  /** El documento con la respuesta, si ya se contestó. */
+  readonly answer: number | null;
 }

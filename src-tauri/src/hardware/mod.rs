@@ -1,6 +1,7 @@
 use serde::Serialize;
 use sysinfo::System;
 
+mod budget;
 mod recommendation;
 
 pub use recommendation::{recommend, HardwareFacts, Recommendation};

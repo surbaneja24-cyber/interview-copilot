@@ -10,6 +10,7 @@ mod secrets;
 mod state;
 mod storage;
 mod stt;
+mod training;
 
 use std::path::PathBuf;
 
@@ -26,6 +27,7 @@ use rag::retriever::{Retrieval, Retriever, DEFAULT_TOP_K};
 use rag::{extract, vector_store};
 use state::{AppState, CaptureSnapshot, ModelStatus};
 use stt::{SttModel, TranscriptState};
+use training::TrainingQuestion;
 use storage::{Db, Document, DocumentKind, NewDocument, NewProject, Project};
 
 const DB_FILE: &str = "interview-copilot.db";
@@ -69,7 +71,7 @@ fn delete_document(state: tauri::State<'_, AppState>, id: i64) -> AppResult<()> 
 #[tauri::command]
 async fn import_document(
     state: tauri::State<'_, AppState>,
-    project_id: i64,
+    project_id: Option<i64>,
     path: String,
     kind: DocumentKind,
 ) -> AppResult<IndexReport> {
@@ -85,12 +87,95 @@ async fn import_document(
     log::info!("extraidos {} caracteres de {title}", content.len());
 
     let embedder = state.embedder()?;
+    // Sin proyecto, el documento es del candidato y sirve para todas las entrevistas: es
+    // lo que hace que el CV se cargue una vez y no en cada oferta.
     let new = NewDocument {
         project_id,
         title,
         kind,
+        tag: None,
         source_path: Some(path),
         content,
+    };
+
+    Indexer::new(&state.db, embedder.as_ref()).add_document(&new)
+}
+
+/// El material del candidato: lo que no cuelga de ninguna entrevista.
+#[tauri::command]
+fn candidate_documents(
+    state: tauri::State<'_, AppState>,
+    kind: Option<DocumentKind>,
+) -> AppResult<Vec<Document>> {
+    state.db.list_candidate_documents(kind)
+}
+
+/// El banco de entrenamiento, con lo que ya esta contestado.
+///
+/// Una pregunta se da por contestada si existe un documento del candidato con esa misma
+/// pregunta por titulo. No se guarda el identificador en la base a proposito: asi una
+/// respuesta escrita a mano a una pregunta que no esta en el banco cuenta igual.
+#[tauri::command]
+fn training_questions(state: tauri::State<'_, AppState>) -> AppResult<Vec<TrainingStatus>> {
+    let answered = state
+        .db
+        .list_candidate_documents(Some(DocumentKind::PreparedAnswers))?;
+
+    Ok(training::QUESTIONS
+        .iter()
+        .map(|question| TrainingStatus {
+            question: *question,
+            answer: answered
+                .iter()
+                .find(|document| document.title == question.text)
+                .map(|document| document.id),
+        })
+        .collect())
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TrainingStatus {
+    #[serde(flatten)]
+    question: TrainingQuestion,
+    /// El documento con la respuesta, si ya se contesto.
+    answer: Option<i64>,
+}
+
+/// Guarda una respuesta preparada y la indexa (§5).
+///
+/// Se guarda **la pregunta junto a la respuesta**, no la respuesta sola. Es lo que hace que
+/// durante la entrevista una pregunta parecida recupere esta respuesta: el parecido esta
+/// entre preguntas, no entre la pregunta y el texto de una respuesta que habla de otra cosa.
+///
+/// Y no cuelga de ningun proyecto a proposito: lo que el usuario contesta sobre si mismo
+/// vale para esta entrevista y para las siguientes, que es justo el punto del entrenamiento.
+#[tauri::command]
+async fn save_prepared_answer(
+    state: tauri::State<'_, AppState>,
+    question: String,
+    answer: String,
+    tag: Option<String>,
+) -> AppResult<IndexReport> {
+    let question = question.trim().to_owned();
+    let answer = answer.trim().to_owned();
+
+    if question.is_empty() || answer.is_empty() {
+        return Err(AppError::Invalid(
+            "hacen falta la pregunta y la respuesta".into(),
+        ));
+    }
+
+    let embedder = state.embedder()?;
+    let new = NewDocument {
+        project_id: None,
+        title: question.clone(),
+        kind: DocumentKind::PreparedAnswers,
+        tag,
+        source_path: None,
+        content: format!("Pregunta: {question}
+
+Respuesta: {answer}"),
     };
 
     Indexer::new(&state.db, embedder.as_ref()).add_document(&new)
@@ -381,6 +466,9 @@ pub fn run() {
             list_documents,
             delete_document,
             import_document,
+            candidate_documents,
+            training_questions,
+            save_prepared_answer,
             index_pending,
             search_context,
             model_status,

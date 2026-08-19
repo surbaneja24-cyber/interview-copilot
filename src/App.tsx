@@ -1,15 +1,17 @@
 import { useState } from 'react';
 import { PrepareView } from '@/views/PrepareView';
+import { TrainingView } from '@/views/TrainingView';
 import { ProjectsView } from '@/views/ProjectsView';
 import { SettingsView } from '@/views/SettingsView';
 
-const VIEWS = ['projects', 'prepare', 'interview', 'practice', 'settings'] as const;
+const VIEWS = ['projects', 'prepare', 'training', 'interview', 'practice', 'settings'] as const;
 
 type View = (typeof VIEWS)[number];
 
 const VIEW_LABELS: Record<View, string> = {
   projects: 'Proyectos',
   prepare: 'Preparación',
+  training: 'Entrenamiento',
   interview: 'Entrevista',
   practice: 'Práctica',
   settings: 'Ajustes',
@@ -45,6 +47,7 @@ export function App() {
       <main className="app__main">
         {view === 'projects' && <ProjectsView />}
         {view === 'prepare' && <PrepareView />}
+        {view === 'training' && <TrainingView />}
         {view === 'settings' && <SettingsView />}
         {PENDING[view] !== undefined && (
           <>

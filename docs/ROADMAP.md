@@ -278,7 +278,25 @@ Los tres modelos de whisper se descargan desde la aplicación con su SHA-256 com
 huellas son las que publica el repositorio de modelos; la de `base` está además comprobada a
 mano contra el fichero descargado, y eso es lo que da derecho a fiarse de las otras dos.
 
-## Fase 5 — Entrevista en vivo (cierre del MVP 1)
+## Fase 5 — Entrenamiento previo y entrevista en vivo (cierre del MVP 1)
+
+El modo entrenamiento sube aquí desde la Fase 7. Ha dejado de ser un extra para practicar:
+es el mecanismo que sostiene §6. La IA no puede inventar experiencia, así que durante la
+entrevista solo sabe componer con lo que haya, y el entrenamiento es donde el candidato pone
+ese material con sus palabras.
+
+- [x] Esquema v4: el material del candidato deja de pertenecer a un proyecto y se reutiliza
+      en todas las entrevistas
+- [x] Banco de preguntas de entrenamiento por tipo (§7), con una pista de qué debe llevar
+      cada respuesta
+- [x] Responder por escrito o **dictando**, reutilizando micrófono, VAD y whisper
+- [x] Cada respuesta se indexa con su pregunta delante, medido contra el CV real
+- [ ] Preguntas generadas a partir de la oferta concreta, además del banco fijo
+- [ ] Peso por origen en la recuperación: una respuesta entrenada vale más que una línea del
+      CV. Hoy gana por similitud sola; falta medir si hace falta empujarla
+- [ ] Huecos detectados: una pregunta sin material se convierte en la siguiente pregunta de
+      entrenamiento (§13)
+- [ ] Respuesta instantánea para preguntas ya entrenadas, con el LLM adaptándola después
 
 - [ ] Clasificador de preguntas: reglas primero, LLM solo ante ambigüedad (§7)
 - [ ] Máquina de estados de la entrevista

@@ -21,7 +21,7 @@ pub enum DocumentKind {
 }
 
 impl DocumentKind {
-    fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             Self::Cv => "cv",
             Self::JobOffer => "job_offer",
@@ -48,9 +48,14 @@ impl DocumentKind {
 #[serde(rename_all = "camelCase")]
 pub struct Document {
     pub id: i64,
-    pub project_id: i64,
+    /// `None` significa que el documento es del candidato y vale para todas las
+    /// entrevistas: el CV, las respuestas preparadas, sus historias. Solo cuelga de un
+    /// proyecto lo que es de esa oferta concreta.
+    pub project_id: Option<i64>,
     pub title: String,
     pub kind: DocumentKind,
+    /// Para una respuesta preparada, el tipo de pregunta que contesta (§7).
+    pub tag: Option<String>,
     pub source_path: Option<String>,
     pub created_at: String,
     /// Cuantos trozos indexables produjo. Cero significa que el documento entro pero no
@@ -61,9 +66,12 @@ pub struct Document {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NewDocument {
-    pub project_id: i64,
+    /// `None` para el material del candidato, que se reutiliza en cada entrevista.
+    pub project_id: Option<i64>,
     pub title: String,
     pub kind: DocumentKind,
+    #[serde(default)]
+    pub tag: Option<String>,
     pub source_path: Option<String>,
     pub content: String,
 }
@@ -94,12 +102,13 @@ impl Db {
 
         let conn = self.lock()?;
         conn.execute(
-            "INSERT INTO documents (project_id, title, kind, source_path, content)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO documents (project_id, title, kind, tag, source_path, content)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 new.project_id,
                 title,
                 new.kind.as_str(),
+                new.tag,
                 new.source_path,
                 new.content
             ],
@@ -112,14 +121,30 @@ impl Db {
     pub fn list_documents(&self, project_id: i64) -> AppResult<Vec<Document>> {
         let conn = self.lock()?;
         let mut stmt = conn.prepare(
-            "SELECT d.id, d.project_id, d.title, d.kind, d.source_path, d.created_at,
+            "SELECT d.id, d.project_id, d.title, d.kind, d.tag, d.source_path, d.created_at,
                     (SELECT count(*) FROM chunks c WHERE c.document_id = d.id)
              FROM documents d
-             WHERE d.project_id = ?1
+             WHERE d.project_id = ?1 OR d.project_id IS NULL
              ORDER BY d.created_at DESC",
         )?;
 
         let rows = stmt.query_map(params![project_id], row_to_document)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(AppError::from)
+    }
+
+    /// El material del candidato: lo que no cuelga de ninguna entrevista y se reutiliza en
+    /// todas. `kind` filtra, por ejemplo, solo las respuestas preparadas.
+    pub fn list_candidate_documents(&self, kind: Option<DocumentKind>) -> AppResult<Vec<Document>> {
+        let conn = self.lock()?;
+        let mut stmt = conn.prepare(
+            "SELECT d.id, d.project_id, d.title, d.kind, d.tag, d.source_path, d.created_at,
+                    (SELECT count(*) FROM chunks c WHERE c.document_id = d.id)
+             FROM documents d
+             WHERE d.project_id IS NULL AND (?1 IS NULL OR d.kind = ?1)
+             ORDER BY d.created_at DESC",
+        )?;
+
+        let rows = stmt.query_map(params![kind.map(DocumentKind::as_str)], row_to_document)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(AppError::from)
     }
 
@@ -144,7 +169,7 @@ impl Db {
     pub fn replace_chunks(
         &self,
         document_id: i64,
-        project_id: i64,
+        project_id: Option<i64>,
         chunks: &[Chunk],
     ) -> AppResult<Vec<i64>> {
         let conn = self.lock()?;
@@ -225,7 +250,7 @@ impl Db {
         let conn = self.lock()?;
         let mut stmt = conn.prepare(
             "SELECT c.id, c.text FROM chunks c
-             WHERE c.project_id = ?1
+             WHERE (c.project_id = ?1 OR c.project_id IS NULL)
                AND c.id NOT IN (SELECT chunk_id FROM chunk_vectors)
              ORDER BY c.id",
         )?;
@@ -287,7 +312,7 @@ fn ignore_missing_vector_table(err: rusqlite::Error) -> rusqlite::Result<usize> 
 
 fn read_document(conn: &Connection, id: i64) -> AppResult<Document> {
     conn.query_row(
-        "SELECT d.id, d.project_id, d.title, d.kind, d.source_path, d.created_at,
+        "SELECT d.id, d.project_id, d.title, d.kind, d.tag, d.source_path, d.created_at,
                 (SELECT count(*) FROM chunks c WHERE c.document_id = d.id)
          FROM documents d WHERE d.id = ?1",
         params![id],
@@ -302,8 +327,9 @@ fn row_to_document(row: &rusqlite::Row<'_>) -> rusqlite::Result<Document> {
         project_id: row.get(1)?,
         title: row.get(2)?,
         kind: DocumentKind::parse(&row.get::<_, String>(3)?),
-        source_path: row.get(4)?,
-        created_at: row.get(5)?,
-        chunk_count: row.get(6)?,
+        tag: row.get(4)?,
+        source_path: row.get(5)?,
+        created_at: row.get(6)?,
+        chunk_count: row.get(7)?,
     })
 }

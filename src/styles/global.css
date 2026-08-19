@@ -538,3 +538,21 @@ code {
   font-size: 0.75rem;
   font-variant-numeric: tabular-nums;
 }
+
+/* Caja de respuesta del entrenamiento: se escribe o se dicta. */
+.answer-box {
+  width: 100%;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.answer-box:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}

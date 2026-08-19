@@ -6,7 +6,7 @@
 use crate::embedding::EmbeddingProvider;
 use crate::error::AppResult;
 use crate::rag::{chunking, contact, vector_store};
-use crate::storage::{Db, NewDocument};
+use crate::storage::{Db, DocumentKind, NewDocument};
 
 /// Cuantos trozos se embeben de una vez. Lotes grandes van mas rapido pero reservan mas
 /// memoria de golpe, y aqui la memoria es el recurso escaso.
@@ -75,7 +75,21 @@ impl<'a> Indexer<'a> {
         // lo que puede acabar en pantalla y en el prompt, y ahi un telefono solo gasta
         // uno de los cinco huecos.
         let cleaned = contact::strip(&new.content);
-        let chunks = chunking::split(&cleaned.text);
+        let mut chunks = chunking::split(&cleaned.text);
+
+        // Una respuesta preparada lleva su pregunta en **cada** trozo.
+        //
+        // Medido el 2026-08-19: sin esto, el troceador separaba "Pregunta: …" de
+        // "Respuesta: …" —son dos parrafos y juntos pasan del limite para fusionarlos— y el
+        // mejor resultado de la busqueda acababa siendo el fragmento que solo tiene la
+        // pregunta. Recuperaba de maravilla (0,93) y no servia para nada: al modelo le
+        // llegaba la pregunta que ya sabia y no la respuesta que hacia falta.
+        if new.kind == DocumentKind::PreparedAnswers {
+            for chunk in &mut chunks {
+                chunk.text = format!("{}
+{}", document.title, chunk.text);
+            }
+        }
 
         if chunks.is_empty() {
             return Ok(IndexReport {
@@ -158,7 +172,7 @@ impl<'a> Indexer<'a> {
 mod tests {
     use super::*;
     use crate::error::AppError;
-    use crate::storage::{DocumentKind, NewProject};
+    use crate::storage::NewProject;
 
     /// Proveedor determinista: no descarga nada y produce vectores predecibles, para
     /// poder testear el pipeline sin depender de un modelo real.
@@ -224,9 +238,10 @@ mod tests {
 
     fn documento(project_id: i64, title: &str, content: &str) -> NewDocument {
         NewDocument {
-            project_id,
+            project_id: Some(project_id),
             title: title.to_owned(),
             kind: DocumentKind::Cv,
+            tag: None,
             source_path: None,
             content: content.to_owned(),
         }
@@ -367,6 +382,116 @@ mod tests {
             .expect_err("deberia rechazarse");
 
         assert!(matches!(error, AppError::Invalid(_)));
+    }
+
+    /// El material del candidato no cuelga de ningun proyecto y aun asi se recupera desde
+    /// uno. Es la propiedad sobre la que se apoya el entrenamiento: se contesta una vez y
+    /// vale para todas las entrevistas.
+    ///
+    /// El dia que la busqueda filtre por proyecto —hoy no lo hace— este test tiene que
+    /// seguir pasando, y por eso esta escrito.
+    #[test]
+    fn una_respuesta_del_candidato_se_recupera_desde_cualquier_proyecto() {
+        let f = fixture();
+        let embedder = FakeEmbedder {
+            id: "fake",
+            dimensions: 8,
+        };
+
+        let respuesta = NewDocument {
+            project_id: None,
+            title: "¿Cuál es tu mayor defecto?".into(),
+            kind: DocumentKind::PreparedAnswers,
+            tag: Some("selfAssessment".into()),
+            source_path: None,
+            content: "Pregunta: ¿Cuál es tu mayor defecto?\nRespuesta: Me cuesta \n                      delegar, y lo llevo compensando desde que me tocó repartir el trabajo \n                      de un turno entero entre cuatro personas."
+                .into(),
+        };
+
+        Indexer::new(&f.db, &embedder)
+            .add_document(&respuesta)
+            .expect("guardar la respuesta");
+
+        // Un proyecto nuevo, creado despues, sin ningun documento propio.
+        let otra_entrevista = f
+            .db
+            .create_project(&NewProject {
+                name: "Otra empresa".into(),
+                company: "Otra".into(),
+                role: "Mozo".into(),
+            })
+            .expect("crear proyecto");
+
+        let encontrado = crate::rag::retriever::Retriever::new(&f.db, &embedder)
+            .search(otra_entrevista.id, "¿Cuál es tu mayor defecto?", 5)
+            .expect("buscar");
+
+        assert!(
+            encontrado
+                .chunks
+                .iter()
+                .any(|chunk| chunk.chunk.text.contains("delegar")),
+            "la respuesta entrenada no llego a una entrevista distinta"
+        );
+    }
+
+    /// **La premisa del entrenamiento, medida con el modelo real:** ante una pregunta de
+    /// entrevista, la respuesta que el candidato preparo gana al CV.
+    ///
+    /// Si esto no se cumpliera, entrenar no serviria de nada: el modelo seguiria recibiendo
+    /// las mismas lineas telegraficas del curriculum y teniendo que rellenar los huecos.
+    ///
+    /// `cargo test --lib -- --ignored --nocapture la_respuesta_entrenada_gana`
+    #[test]
+    #[ignore = "descarga el modelo real"]
+    fn la_respuesta_entrenada_gana_al_cv() {
+        use crate::embedding::LocalEmbeddingProvider;
+        use crate::rag::retriever::{Retriever, DEFAULT_TOP_K};
+
+        let f = fixture();
+        let cache = std::env::temp_dir().join("interview-copilot-models");
+        let embedder = LocalEmbeddingProvider::new(&cache).expect("cargar el modelo real");
+        let indexer = Indexer::new(&f.db, &embedder);
+
+        indexer
+            .add_document(&documento(
+                f.project_id,
+                "cv.txt",
+                "EXPERIENCIA. Mozo de almacén y gestión logística en Supply Rodamientos. Carga,                  descarga y reubicación de mercancía. Preparación diaria de pedidos, picking y                  packing, para venta directa y expedición de envíos. Organización del inventario                  físico manteniendo el orden y la seguridad en la zona de trabajo.
+
+                 COMPETENCIAS. Capacidad de trabajo físico pesado. Organización metódica.                  Trabajo en equipo. Resolución rápida de incidencias. Carnet de carretillero.",
+            ))
+            .expect("indexar el CV");
+
+        let pregunta = "Cuéntame una vez que tuviste un conflicto con un compañero";
+        let entrenada = NewDocument {
+            project_id: None,
+            title: pregunta.into(),
+            kind: DocumentKind::PreparedAnswers,
+            tag: Some("behavioral".into()),
+            source_path: None,
+            content: format!(
+                "Pregunta: {pregunta}\nRespuesta: Un compañero del turno de tarde \n                 dejaba la zona de picking sin recoger y yo me la encontraba cada mañana. \n                 En vez de decírselo al encargado, se lo dije a él directamente y acordamos \n                 repasar juntos los últimos quince minutos del turno. Dejó de pasar en una \n                 semana y acabamos llevándonos bien."
+            ),
+        };
+        indexer
+            .add_document(&entrenada)
+            .expect("indexar la respuesta entrenada");
+
+        let recuperado = Retriever::new(&f.db, &embedder)
+            .search(f.project_id, pregunta, DEFAULT_TOP_K)
+            .expect("buscar");
+
+        for chunk in &recuperado.chunks {
+            println!("  {:.4}  {}", chunk.similarity, &chunk.chunk.text[..80.min(chunk.chunk.text.len())]);
+        }
+
+        let mejor = &recuperado.chunks[0].chunk;
+        assert!(
+            mejor.text.contains("turno de tarde"),
+            "gano el CV en vez de la respuesta entrenada: {}",
+            mejor.text
+        );
     }
 
     /// Camino completo con el modelo de verdad: fichero en disco → extraccion → troceado

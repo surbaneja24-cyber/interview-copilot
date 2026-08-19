@@ -66,6 +66,58 @@ const MIGRATIONS: &[&str] = &[
         updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
     ",
+    // v4 - el material del candidato deja de pertenecer a un proyecto.
+    //
+    // Hasta aqui, un documento colgaba de un proyecto y cada entrevista empezaba de cero:
+    // el CV, las respuestas preparadas y todo lo demas habia que volver a cargarlos. Lo
+    // que el producto necesita es lo contrario — un fondo del candidato que se acumula
+    // entrevista tras entrevista, y proyectos que solo aportan la oferta concreta.
+    //
+    // `project_id` pasa a admitir NULL, y NULL significa "es del candidato, vale para
+    // todas las entrevistas". SQLite no sabe cambiar una columna, asi que la tabla se
+    // reconstruye; es la receta oficial y por eso las claves ajenas se apagan durante el
+    // cambio y se vuelven a encender despues.
+    //
+    // Se anade ademas `tag`, que para una respuesta preparada guarda el tipo de pregunta
+    // que contesta (§7). Es lo que permitira entrenar por temas y detectar huecos.
+    r"
+    PRAGMA foreign_keys = OFF;
+
+    CREATE TABLE documents_v4 (
+        id          INTEGER PRIMARY KEY,
+        project_id  INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+        title       TEXT NOT NULL,
+        kind        TEXT NOT NULL,
+        tag         TEXT,
+        source_path TEXT,
+        content     TEXT NOT NULL,
+        created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    INSERT INTO documents_v4 (id, project_id, title, kind, tag, source_path, content, created_at)
+        SELECT id, project_id, title, kind, NULL, source_path, content, created_at FROM documents;
+    DROP TABLE documents;
+    ALTER TABLE documents_v4 RENAME TO documents;
+    CREATE INDEX idx_documents_project ON documents (project_id);
+    CREATE INDEX idx_documents_kind ON documents (kind);
+
+    CREATE TABLE chunks_v4 (
+        id           INTEGER PRIMARY KEY,
+        document_id  INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+        project_id   INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+        ordinal      INTEGER NOT NULL,
+        text         TEXT NOT NULL,
+        start_offset INTEGER NOT NULL,
+        end_offset   INTEGER NOT NULL
+    );
+    INSERT INTO chunks_v4 (id, document_id, project_id, ordinal, text, start_offset, end_offset)
+        SELECT id, document_id, project_id, ordinal, text, start_offset, end_offset FROM chunks;
+    DROP TABLE chunks;
+    ALTER TABLE chunks_v4 RENAME TO chunks;
+    CREATE INDEX idx_chunks_document ON chunks (document_id);
+    CREATE INDEX idx_chunks_project ON chunks (project_id);
+
+    PRAGMA foreign_keys = ON;
+    ",
 ];
 
 pub fn run(conn: &Connection) -> AppResult<()> {
@@ -137,7 +189,7 @@ mod tests {
     /// perder nada. Una migracion que falla aqui no da error: deja la app medio rota y no
     /// se nota hasta mucho despues.
     #[test]
-    fn una_base_en_v2_con_datos_llega_a_v3_sin_perderlos() {
+    fn una_base_en_v2_con_datos_llega_a_la_ultima_version_sin_perderlos() {
         let dir = tempfile::tempdir().expect("directorio temporal");
         let path = dir.path().join("vieja.db");
 
@@ -188,12 +240,23 @@ mod tests {
             "la base perdio con que modelo se construyo el indice: se reindexaria entero"
         );
 
-        // Y lo que trae v3 tiene que funcionar, no solo existir.
+        // Y lo que traen las versiones nuevas tiene que funcionar, no solo existir.
         db.save_settings("prueba", &"valor").expect("guardar ajuste");
         assert_eq!(
             db.load_settings::<String>("prueba").expect("leer ajuste"),
             Some("valor".to_owned())
         );
+
+        // v4: un documento sin proyecto, que es como se guarda el material del candidato.
+        db.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO documents (project_id, title, kind, tag, content)
+                 VALUES (NULL, '¿Tu mayor fracaso?', 'prepared_answers', 'failure', 'Pues...')",
+                [],
+            )?;
+            Ok(())
+        })
+        .expect("un documento del candidato tiene que caber sin proyecto");
     }
 
     /// Migrar desde cualquier version tiene que dejar exactamente el mismo esquema que

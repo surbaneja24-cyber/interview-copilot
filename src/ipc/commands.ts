@@ -17,6 +17,7 @@ import type {
   Retrieval,
   Source,
   SttModelStatus,
+  TrainingStatus,
   TranscriptState,
 } from '@/ipc/types';
 
@@ -45,13 +46,35 @@ export function listDocuments(projectId: number): Promise<readonly DocumentInfo[
   return invoke<DocumentInfo[]>('list_documents', { projectId });
 }
 
+/** El material del candidato: lo que no cuelga de ninguna entrevista. */
+export function candidateDocuments(kind?: DocumentKind): Promise<readonly DocumentInfo[]> {
+  return invoke<DocumentInfo[]>('candidate_documents', { kind: kind ?? null });
+}
+
+/** El banco de entrenamiento, con lo ya contestado marcado. */
+export function trainingQuestions(): Promise<readonly TrainingStatus[]> {
+  return invoke<TrainingStatus[]>('training_questions');
+}
+
+/**
+ * Guarda una respuesta preparada y la indexa. No cuelga de ningún proyecto: lo que cuentas
+ * sobre ti vale para esta entrevista y para las siguientes.
+ */
+export function savePreparedAnswer(
+  question: string,
+  answer: string,
+  tag: string | null,
+): Promise<IndexReport> {
+  return invoke<IndexReport>('save_prepared_answer', { question, answer, tag });
+}
+
 export async function deleteDocument(id: number): Promise<void> {
   await invoke('delete_document', { id });
 }
 
 /** Lee el fichero, extrae su texto y lo indexa. Puede tardar: carga el modelo. */
 export function importDocument(
-  projectId: number,
+  projectId: number | null,
   path: string,
   kind: DocumentKind,
 ): Promise<IndexReport> {

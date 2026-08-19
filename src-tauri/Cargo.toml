@@ -5,7 +5,9 @@ description = "Copiloto de entrevistas local-first"
 authors = ["Santiago Urbaneja"]
 license = "MIT"
 edition = "2021"
-rust-version = "1.77.2"
+# Se usa `Option::is_none_or`, estable desde 1.82. La cifra anterior (1.77.2) era
+# aspiracional: el crate no compilaba con ella. Clippy lo detecto.
+rust-version = "1.82.0"
 
 [lib]
 name = "interview_copilot_lib"

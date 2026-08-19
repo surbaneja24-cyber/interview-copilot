@@ -23,9 +23,14 @@ pub fn register() {
         // tipo de puntero, que es como la propia documentacion de sqlite-vec indica
         // registrarla desde Rust.
         unsafe {
-            rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute(
-                sqlite_vec::sqlite3_vec_init as *const (),
-            )));
+            let init: unsafe extern "C" fn(
+                *mut rusqlite::ffi::sqlite3,
+                *mut *mut std::ffi::c_char,
+                *const rusqlite::ffi::sqlite3_api_routines,
+            ) -> std::ffi::c_int =
+                std::mem::transmute(sqlite_vec::sqlite3_vec_init as *const ());
+
+            rusqlite::ffi::sqlite3_auto_extension(Some(init));
         }
         log::info!("extension sqlite-vec registrada");
     });

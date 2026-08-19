@@ -40,10 +40,16 @@ impl ProviderKind {
     /// despues de "borrar todos mis datos".
     pub const WITH_CREDENTIALS: &'static [Self] = &[Self::OpenAi];
 
+    /// Se enumeran todas las variantes a proposito, sin comodin: anadir un proveedor
+    /// nuevo tiene que romper la compilacion aqui y obligar a decidir. Con `_ => false`,
+    /// un proveedor de nube nuevo se declararia en silencio como que no saca datos del
+    /// equipo, que es la peor forma posible de equivocarse en esto.
     pub fn sends_data_outside(self) -> bool {
         match self {
+            Self::Local => false,
             Self::OpenAi => true,
-            _ => false,
+            #[cfg(debug_assertions)]
+            Self::Mock => false,
         }
     }
 
@@ -57,10 +63,13 @@ impl ProviderKind {
         }
     }
 
+    /// Sin comodin, por el mismo motivo que `sends_data_outside`.
     pub fn needs_api_key(self) -> bool {
         match self {
+            Self::Local => false,
             Self::OpenAi => true,
-            _ => false,
+            #[cfg(debug_assertions)]
+            Self::Mock => false,
         }
     }
 

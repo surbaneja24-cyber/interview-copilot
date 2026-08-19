@@ -123,16 +123,6 @@ impl Db {
         rows.collect::<Result<Vec<_>, _>>().map_err(AppError::from)
     }
 
-    pub fn document_content(&self, document_id: i64) -> AppResult<String> {
-        let conn = self.lock()?;
-        conn.query_row(
-            "SELECT content FROM documents WHERE id = ?1",
-            params![document_id],
-            |row| row.get(0),
-        )
-        .map_err(AppError::from)
-    }
-
     pub fn delete_document(&self, document_id: i64) -> AppResult<()> {
         let conn = self.lock()?;
         // Los trozos caen por ON DELETE CASCADE; sus vectores hay que quitarlos a mano

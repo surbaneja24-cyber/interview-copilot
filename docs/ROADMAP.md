@@ -13,10 +13,23 @@ de C++, CMake.
 - [x] Proyecto Tauri 2 + React + TS estricto arrancando en `npm run tauri dev`
 - [x] ESLint con reglas type-checked estrictas, sin avisos
 - [x] SQLite con migraciones y ruta de datos en `%APPDATA%`
-- [ ] `cargo clippy` en el pipeline
+- [x] `cargo clippy` sin avisos, con `npm run lint:rust`. No hay CI todavia, asi que es
+      un comando y no una barrera automatica; lo que si hace es fallar con `-D warnings`
+      en vez de dejar pasar los avisos
 
 **Hito conseguido:** la ventana abre y escribe en la base de datos. Verificado: proceso vivo,
 `user_version = 1`, tabla `projects` creada, WAL activo. Huella de memoria 261 MB en dev.
+
+Lo que encontro clippy al pasarlo por primera vez, el 2026-08-19, y que conviene no
+repetir:
+
+- **El crate declaraba `rust-version = "1.77.2"` y no compilaba con esa version.** Usa
+  `Option::is_none_or`, estable desde 1.82. La cifra se puso a ojo y nadie la comprobo;
+  cualquiera que hubiera intentado compilar con la version prometida se habria estrellado.
+- **Un `_ => false` en `ProviderKind::sends_data_outside`.** Anadir un proveedor de nube
+  nuevo lo habria declarado en silencio como que no saca datos del equipo. Ahora las
+  variantes se enumeran todas, para que anadir una rompa la compilacion y obligue a
+  decidir. Es el tipo de comodin que parece limpieza y es una trampa.
 
 ## Fase 1 — Detección de hardware y Settings
 

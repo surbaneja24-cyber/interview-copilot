@@ -121,6 +121,11 @@ pub trait LlmProvider: Send + Sync {
 
     /// Generacion sin streaming. Deliberadamente construida sobre `stream_chat` para que
     /// no haya dos caminos que puedan comportarse distinto.
+    ///
+    /// Todavia no la llama ningun comando —la entrevista siempre va con streaming— pero
+    /// forma parte de la interfaz que pide el spec y su test comprueba que coincide con
+    /// `stream_chat`. Se queda hasta que el modo practica la use.
+    #[allow(dead_code)]
     fn generate(&self, request: ChatRequest) -> BoxFuture<'_, AppResult<String>> {
         Box::pin(async move {
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();

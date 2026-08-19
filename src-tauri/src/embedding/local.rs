@@ -32,6 +32,9 @@ pub struct ModelSpec {
 }
 
 /// Multilingue, sin cuantizar. 470 MB en disco.
+/// Solo lo usa el banco de pruebas: es una de las alternativas que se midieron y
+/// se descartaron, y se conserva para poder repetir la medicion.
+#[cfg(test)]
 pub const MULTILINGUAL_E5_SMALL: ModelSpec = ModelSpec {
     id: "multilingual-e5-small",
     model: EmbeddingModel::MultilingualE5Small,
@@ -42,6 +45,9 @@ pub const MULTILINGUAL_E5_SMALL: ModelSpec = ModelSpec {
 };
 
 /// Multilingue cuantizado, bastante mas pequeno. Candidato para hardware ajustado.
+/// Solo lo usa el banco de pruebas: es una de las alternativas que se midieron y
+/// se descartaron, y se conserva para poder repetir la medicion.
+#[cfg(test)]
 pub const PARAPHRASE_ML_MINILM_Q: ModelSpec = ModelSpec {
     id: "paraphrase-multilingual-minilm-l12-v2-q",
     model: EmbeddingModel::ParaphraseMLMiniLML12V2Q,
@@ -62,6 +68,9 @@ pub const MULTILINGUAL_E5_BASE: ModelSpec = ModelSpec {
 };
 
 /// Multilingue de la familia sentence-transformers, sin prefijos. ~1 GB en disco.
+/// Solo lo usa el banco de pruebas: es una de las alternativas que se midieron y
+/// se descartaron, y se conserva para poder repetir la medicion.
+#[cfg(test)]
 pub const PARAPHRASE_ML_MPNET: ModelSpec = ModelSpec {
     id: "paraphrase-multilingual-mpnet-base-v2",
     model: EmbeddingModel::ParaphraseMLMpnetBaseV2,

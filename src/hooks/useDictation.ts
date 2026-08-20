@@ -31,14 +31,42 @@ export function useDictation(onText: (texto: string) => void) {
   const sink = useRef(onText);
   sink.current = onText;
 
-  const stop = useCallback(() => {
+  // Qué intento de dictado manda. Abrir el micrófono son dos viajes al backend, y en ese
+  // rato pueden llegar otro `start` o un `stop`; sin esto, el que arrancó primero termina
+  // igualmente y monta su temporizador encima del bueno.
+  //
+  // No es un caso raro: `StrictMode` monta, desmonta y vuelve a montar cada efecto en
+  // desarrollo, así que el modo diapositiva abre el micrófono dos veces en cada pregunta
+  // —medido el 2026-08-20, dos `capturando micrófono` en el mismo segundo—. El temporizador
+  // que quedaba huérfano seguía preguntando por transcripciones después de parar, y
+  // compartía `before` con el vivo: los dos veían los mismos turnos como nuevos.
+  const attempt = useRef(0);
+  /// Si se ha llegado a pedir el micrófono. Ver `stop`.
+  const opened = useRef(false);
+
+  const cancelTimer = useCallback(() => {
     if (timer.current !== null) {
       window.clearInterval(timer.current);
       timer.current = null;
     }
-    setDictating(false);
-    void stopCapture('mic');
   }, []);
+
+  const stop = useCallback(() => {
+    // Invalida cualquier arranque que siga en vuelo, además del temporizador ya montado.
+    attempt.current += 1;
+    cancelTimer();
+    setDictating(false);
+
+    // Solo se manda cerrar si se llegó a mandar abrir. Parece de más y no lo es: el
+    // desmontaje de `StrictMode` para un dictado que aún no había pedido el micrófono, y
+    // ese cierre llegaría al backend **después** del `start_capture` del montaje bueno.
+    // El resultado sería la pantalla diciendo "escuchando" con el micrófono cerrado, que
+    // es justo el fallo que no se puede tener: no da error y no escribe nada.
+    if (opened.current) {
+      opened.current = false;
+      void stopCapture('mic');
+    }
+  }, [cancelTimer]);
 
   // Salir de la pantalla suelta el micrófono. Dejarlo abierto porque el usuario cambió de
   // pestaña sería seguir escuchando sin decirlo.
@@ -47,16 +75,34 @@ export function useDictation(onText: (texto: string) => void) {
   const start = useCallback(() => {
     setError(null);
 
+    attempt.current += 1;
+    const mine = attempt.current;
+    // Un arranque nuevo se lleva por delante el temporizador del anterior aunque el
+    // micrófono siga abierto: `start_capture` ya suelta la captura previa por su cuenta.
+    cancelTimer();
+
     transcript()
       .then((current) => {
+        // Otro `start` o un `stop` llegaron mientras se preguntaba: abrir el micrófono
+        // ahora significaría soltar la captura buena para volver a abrirla.
+        if (attempt.current !== mine) return undefined;
         before.current = current?.entries.length ?? 0;
+        // Se marca al pedirlo, no al conseguirlo: si un `stop` llega mientras el backend
+        // abre el dispositivo, tiene que mandar cerrarlo igual.
+        opened.current = true;
         return startCapture('mic', null);
       })
       .then(() => {
+        if (attempt.current !== mine) return;
         setDictating(true);
         timer.current = window.setInterval(() => {
           transcript()
             .then((current) => {
+              // La consulta salió antes de parar y vuelve después: ese texto es de un
+              // dictado que ya no existe, y soltarlo lo escribiría en la pregunta
+              // siguiente.
+              if (attempt.current !== mine) return;
+
               setState(current);
               if (current === null) return;
 
@@ -72,6 +118,7 @@ export function useDictation(onText: (texto: string) => void) {
         }, POLL_MS);
       })
       .catch((cause: unknown) => {
+        if (attempt.current !== mine) return;
         setError(describeError(cause));
         setDictating(false);
       });

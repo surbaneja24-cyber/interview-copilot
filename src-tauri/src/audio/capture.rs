@@ -714,6 +714,93 @@ mod tests {
         );
     }
 
+    /// La misma cadena, pero **por el microfono**, que es por donde dicta el usuario.
+    ///
+    /// `de_la_voz_al_texto` la prueba por el loopback, y las dos fuentes no son la misma
+    /// ruta: distinta lista de dispositivos, distinta configuracion —la del loopback sale
+    /// de la *salida*— y ningun flujo mudo de por medio. Que una funcione no dice nada de
+    /// la otra, y dictar en Entrenamiento va por esta.
+    ///
+    /// Hay que hablarle. Imprime lo que ve el VAD cada medio segundo para poder distinguir
+    /// los tres fallos que desde fuera se ven igual —"Escuchando" y nada de texto—:
+    ///
+    /// - `muestras` a cero: el dispositivo abrio y no entrega audio.
+    /// - `pico` a cero con muestras subiendo: el audio entra y no llega a la cola del VAD.
+    /// - `pico` alto y `prob` baja: llega audio y Silero no lo toma por voz.
+    ///
+    /// `INTERVIEW_COPILOT_VAD=<onnx> INTERVIEW_COPILOT_WHISPER=<ggml> cargo test --lib -- --ignored --nocapture del_microfono_al_texto`
+    #[test]
+    #[ignore = "toma el micrófono del equipo y hay que hablarle"]
+    fn del_microfono_al_texto() {
+        let vad_model = std::env::var("INTERVIEW_COPILOT_VAD").expect("INTERVIEW_COPILOT_VAD");
+        let whisper_model =
+            std::env::var("INTERVIEW_COPILOT_WHISPER").expect("INTERVIEW_COPILOT_WHISPER");
+
+        let transcriber =
+            crate::stt::Transcriber::start(PathBuf::from(whisper_model), "whisper-base")
+                .expect("arrancar la transcripcion");
+
+        let recorder = Recorder::start(
+            Source::Mic,
+            None,
+            Some(PathBuf::from(vad_model)),
+            transcriber.sender(),
+        )
+        .expect("abrir el microfono con VAD y transcripcion");
+
+        let inicial = recorder.status();
+        println!(
+            "microfono: {} — {} Hz, {} canales",
+            inicial.device.as_deref().unwrap_or("?"),
+            inicial.sample_rate,
+            inicial.channels
+        );
+        println!("HABLA AHORA. Se mira durante 20 segundos.");
+
+        let limite = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        let mut visto: Option<String> = None;
+
+        while std::time::Instant::now() < limite && visto.is_none() {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+
+            let status = recorder.status();
+            let vad = status.vad.as_ref().expect("la captura tenia que llevar VAD");
+            println!(
+                "muestras {:>8} · rms {:>6.1} dB · pico del VAD {:.4} · prob {:.3} (max {:.3}) · turnos {} · perdidas {}",
+                status.frames,
+                status.level.rms_dbfs,
+                vad.peak_in,
+                vad.probability,
+                vad.max_probability,
+                vad.turns,
+                vad.dropped
+            );
+
+            let estado = transcriber.state();
+            assert_eq!(estado.error, None, "la transcripcion fallo");
+            if let Some(entrada) = estado.entries.first() {
+                println!(
+                    "TEXTO: {} ms de audio en {} ms — {}",
+                    entrada.audio_ms, entrada.took_ms, entrada.text
+                );
+                visto = Some(entrada.text.clone());
+            }
+        }
+
+        let vad = recorder.status().vad.expect("estado del VAD");
+        assert!(
+            vad.peak_in > 0.0,
+            "el microfono abrio pero al VAD no le llego ni una muestra distinta de cero"
+        );
+        assert_eq!(vad.dropped, 0, "el VAD no vio todo el audio");
+        assert!(
+            visto.is_some(),
+            "20 s sin transcribir nada: turnos cerrados {}, probabilidad maxima {:.3}",
+            vad.turns,
+            vad.max_probability
+        );
+    }
+
     /// El loopback, y de paso la pregunta que no se puede contestar razonando: **¿entrega
     /// datos WASAPI cuando no suena nada?** Si no lo hace, el medidor se queda congelado y
     /// hay que mantener abierto un flujo mudo de reproduccion para que siga el reloj.

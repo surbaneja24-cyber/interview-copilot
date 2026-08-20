@@ -295,8 +295,18 @@ ese material con sus palabras.
       decisiones sobre cuál toca ahora ni veinte clics para abrir el micrófono
 - [x] Cada respuesta se indexa con su pregunta delante, medido contra el CV real
 - [ ] Preguntas generadas a partir de la oferta concreta, además del banco fijo
-- [ ] Peso por origen en la recuperación: una respuesta entrenada vale más que una línea del
-      CV. Hoy gana por similitud sola; falta medir si hace falta empujarla
+- [x] **Medido de dónde salen los cinco fragmentos que ve el modelo** (2026-08-20). Sobre el
+      CV real más una oferta del puesto, y las veinte preguntas del banco: **19 de 20 traen
+      material de la empresa en el top 5**, 36 de los 100 sitios, y **la oferta es el primer
+      resultado en 12**. Ante "cuéntame un proyecto complicado", lo mejor que recibe el
+      modelo es lo que la empresa pide — y la cita literal de §5 lo da por bueno. El detalle
+      está en `ARCHITECTURE.md` §5.2
+- [ ] **Filtrar la oferta por tipo de pregunta**, que es lo que sustituye al peso por origen:
+      medido, la oferta no vale menos siempre sino según la pregunta, y el reparto sigue al
+      `QuestionKind` que ya existe. Fuera en `Behavioral` / `Experience` / `SelfAssessment`,
+      dentro en `Motivation` / `Logistics`
+- [ ] Peso de las respuestas entrenadas frente al CV: sigue sin medirse más allá de una sola
+      pregunta (0,8746 contra 0,7960 en §5.1). Hoy gana por similitud sola
 - [ ] Huecos detectados: una pregunta sin material se convierte en la siguiente pregunta de
       entrenamiento (§13)
 - [ ] Respuesta instantánea para preguntas ya entrenadas, con el LLM adaptándola después

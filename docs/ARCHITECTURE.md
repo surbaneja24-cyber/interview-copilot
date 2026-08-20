@@ -529,6 +529,56 @@ no. El filtro pasa de ser una barrera a ser un seguro barato.
 Lo que **no** cambia: el modelo sigue pudiendo adornar lo que se le da. La cita verificada se
 queda como suelo. Lo que cambia es que ahora hay suelo y hay material.
 
+## 5.2 La oferta de empleo no es experiencia del candidato (medido el 2026-08-20)
+
+El retriever ordena solo por similitud y el origen de cada fragmento no pinta nada en esa
+decisión, aunque `DocumentKind` esté ahí desde la Fase 2 con un comentario que promete
+usarlo "para pesar la recuperación más adelante". Este es ese más adelante, y lo primero
+fue medir si hacía falta.
+
+Corpus: el CV real y una oferta del puesto que persigue. Preguntas: el banco entero de
+entrenamiento, las veinte, sin elegir (`rag/indexer.rs`, test
+`de_donde_salen_los_cinco_fragmentos_que_ve_el_modelo`).
+
+| Medida | Resultado |
+|---|---|
+| Preguntas con material de la empresa en el top 5 | **19 de 20** |
+| Fragmentos de oferta sobre los 100 sitios disponibles | **36** |
+| Preguntas donde la oferta es el **primer** resultado | **12 de 20** |
+| Margen entre el mejor de la oferta y el mejor del CV | −0,0330 a +0,0091 |
+
+**Por qué es grave y no una imprecisión.** Ante *"cuéntame un proyecto complicado en el que
+hayas trabajado"*, el mejor fragmento que recibe el modelo es la oferta: un documento que
+dice lo que la empresa **pide**, no lo que el candidato **hizo**. Y la barrera de §5 lo deja
+pasar, porque esa frase sí está literalmente en los documentos indexados. Es el mismo camino
+por el que `llama3.2:1b` se inventó un puesto entero adornado con dos citas reales del CV,
+solo que aquí el material inventable se lo sirve el propio retriever.
+
+Los márgenes son minúsculos, como en §2.1. La oferta no gana por ser más relevante: gana
+porque **repite el vocabulario del CV** —"picking y packing", "carnet de carretillero",
+"control de stock", "trabajo en equipo"—. Los embeddings miden de qué habla un texto, no de
+quién habla, y eso ya está medido en §5: es la misma limitación que tumbó el umbral.
+
+**La conclusión no es la que se esperaba, y por eso se midió antes de escribir el código.**
+El plan era un peso por origen: una constante que hiciera valer menos a la oferta. No sirve,
+porque la oferta no vale menos siempre. Vale menos **según la pregunta**, y el reparto sigue
+exactamente al `QuestionKind` que el banco ya lleva:
+
+- `Behavioral`, `Experience`, `SelfAssessment` — la oferta no aporta nada y contamina 9 de
+  las 13. Son las preguntas de "cuéntame una vez que...", donde la respuesta tiene que salir
+  de la experiencia del candidato o no salir.
+- `Motivation`, `Logistics` — la oferta es justo el material bueno. Para *"¿por qué quieres
+  trabajar aquí?"* (3 de 5) o *"¿cuál es tu disponibilidad?"* contestar sin leerla sería el
+  error contrario.
+
+Así que no es un multiplicador que calibrar sino **un filtro por tipo de pregunta**, con un
+`kind` que ya existe en los dos extremos: en el banco durante el entrenamiento, y en el
+clasificador de §7 durante la entrevista. Una constante menos que inventar, que es la
+diferencia entre una regla que se puede defender y un número puesto a ojo.
+
+Lo que **no** mide este test, y hay que decirlo: el peso de las respuestas entrenadas frente
+al CV. Eso sigue con el único dato de §5.1 —0,8746 contra 0,7960— y una sola pregunta.
+
 ## 6. Protección de captura (§26-33)
 
 Interfaz `CaptureProtection` con `enable` / `disable` / `is_supported` / `get_status`, y tres modos: `OFF`, `EXCLUDE_FROM_CAPTURE`, `MONITOR_ONLY`.

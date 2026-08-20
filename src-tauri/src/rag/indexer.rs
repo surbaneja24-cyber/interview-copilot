@@ -604,4 +604,173 @@ mod tests {
 
         assert_eq!(remaining, 0, "quedaron vectores huerfanos tras borrar");
     }
+
+    /// El CV real de Santiago, tal y como esta indexado en su base (8 fragmentos, 1.923
+    /// caracteres). Se copia aqui en vez de leerlo del disco para que la medicion sea
+    /// repetible: el CV de la base cambia cuando el lo cambie, y entonces los numeros de
+    /// abajo dejarian de ser comparables sin que nadie se entere.
+    const CV_REAL: &str = "Santiago Urbaneja\n\nProfesional de logística y almacén\n\nIgualada, España\n\n\
+         Perfil Profesional\n\n\
+         Profesional de logística y almacén proactivo y organizado, con casi tres años de \
+         experiencia en la gestión integral de inventarios, preparación de pedidos y control \
+         de stock. Poseo carnet de carretillero en vigor y destreza en el manejo de mercancías. \
+         Acostumbrado a entornos de trabajo dinámicos, combinando el esfuerzo físico con la \
+         gestión administrativa (Excel/ Word).\n\n\
+         Experiencia Laboral\n\n\
+         Mozo de Almacén y Gestión Logística, Supply Rodamientos\n\n\
+         •Carga, descarga y reubicación de mercancía, asegurando el correcto manejo de los \
+         materiales dentro de las instalaciones.\n\n\
+         •Preparación diaria de pedidos (picking y packing) para venta directa y expedición de \
+         envíos, cumpliendo estrictamente con los tiempos de entrega.\n\n\
+         10/2021 – 09/2024\n\n\
+         •Organización eficiente del inventario físico, manteniendo el orden, la limpieza y la \
+         seguridad en la zona de trabajo.\n\n\
+         •Atención directa al cliente y resolución de incidencias, combinando el trabajo \
+         operativo con soporte en ventas presenciales y online.\n\n\
+         Educación y Formación\n\nBachillerato\n\nIngeniería en Mantenimiento (2 semestres)\n\n\
+         Habilidades y Competencias\n\nOperativa Logística\n\n•Carga y descarga\n\n\
+         •Preparación de pedidos (picking/ packing)\n\n•Control de stock\n\n\
+         •Recepción de mercancías\n\nGestión Administrativa\n\n\
+         Nivel avanzado de Excel y Word para el seguimiento de inventarios y cuadre de albaranes\n\n\
+         Maquinaria y Equipos\n\nCarnet de Carretillero\n\nCompetencias Transversales\n\n\
+         •Capacidad de trabajo físico pesado\n\n•Organización metódica\n\n•Trabajo en equipo\n\n\
+         •Resolución rápida de incidencias\n\nIdiomas\n\nEspañol Nativo\n\nInglés Nivel B1\n\n\
+         Catalán Básico\n\nCertificaciones y Carnets\n\n\
+         Carnet de Carretillero. Curso técnico: Manejo de pisos y acabados de Resina Epoxy. \
+         Cursos certificados en atención al cliente: Bartender y Barista.";
+
+    /// Una oferta del puesto que ese CV persigue. Es material **de la empresa**, no del
+    /// candidato, y esa es toda la gracia del test.
+    const OFERTA: &str = "Oferta de empleo: Operario/a de Almacén con carretilla — Igualada\n\n\
+         Buscamos incorporar a nuestro centro logístico una persona responsable y metódica \
+         para la gestión integral del almacén. Te encargarás de la recepción de mercancía, \
+         la ubicación del stock y la preparación de pedidos con los plazos de entrega \
+         acordados con el cliente.\n\n\
+         Funciones principales\n\n\
+         •Carga y descarga de camiones con carretilla frontal y transpaleta eléctrica.\n\n\
+         •Preparación de pedidos mediante picking y packing, garantizando el cumplimiento de \
+         los tiempos de expedición.\n\n\
+         •Control de inventario y cuadre de albaranes en el sistema, con soporte de Excel.\n\n\
+         •Resolución de incidencias con transportistas y atención al cliente interno.\n\n\
+         Requisitos\n\n\
+         •Carnet de carretillero en vigor y experiencia mínima de dos años en almacén.\n\n\
+         •Capacidad para el trabajo físico y para mantener el orden y la seguridad en planta.\n\n\
+         •Persona organizada, resolutiva y acostumbrada a trabajar en equipo bajo presión.\n\n\
+         •Se valorará nivel de inglés y disponibilidad para turnos rotativos.\n\n\
+         Ofrecemos contrato indefinido, salario según convenio y plan de formación continua.";
+
+    /// **De dónde salen los cinco fragmentos que ve el modelo.**
+    ///
+    /// El retriever ordena solo por similitud, y el origen de cada fragmento
+    /// (`DocumentKind`) no pinta nada en esa decision. El comentario de `DocumentKind` ya
+    /// dice que sirve "para pesar la recuperacion mas adelante"; esto mide si ese "mas
+    /// adelante" hace falta, antes de poner ninguna constante.
+    ///
+    /// Lo que se busca no es una nota media, son dos numeros concretos:
+    ///
+    /// 1. **Cuantos fragmentos de la oferta entran en el top 5.** La oferta dice lo que la
+    ///    empresa pide, no lo que el candidato ha hecho. Si se cuela, el modelo puede
+    ///    componer una respuesta con ella y ademas citarla literalmente: la barrera de §5
+    ///    la daria por buena, porque esa frase si esta en los documentos. Es el camino
+    ///    exacto de inventar experiencia que §6 prohibe.
+    /// 2. **Con que margen.** Si la oferta entra por los pelos, un peso pequeno la saca; si
+    ///    entra arrasando, el problema no se arregla pesando.
+    ///
+    /// Corpus: el CV real y una oferta del puesto que persigue. Las preguntas son el banco
+    /// entero de entrenamiento, sin elegir.
+    ///
+    /// `cargo test --lib -- --ignored --nocapture de_donde_salen_los_cinco`
+    #[test]
+    #[ignore = "descarga el modelo real"]
+    fn de_donde_salen_los_cinco_fragmentos_que_ve_el_modelo() {
+        use crate::embedding::LocalEmbeddingProvider;
+        use crate::rag::retriever::{Retriever, DEFAULT_TOP_K};
+
+        let f = fixture();
+        let cache = std::env::temp_dir().join("interview-copilot-models");
+        let embedder = LocalEmbeddingProvider::new(&cache).expect("cargar el modelo real");
+        let indexer = Indexer::new(&f.db, &embedder);
+
+        indexer
+            .add_document(&documento(f.project_id, "CV de Santiago", CV_REAL))
+            .expect("indexar el CV");
+        indexer
+            .add_document(&NewDocument {
+                project_id: Some(f.project_id),
+                title: "Oferta de almacén".into(),
+                kind: DocumentKind::JobOffer,
+                tag: None,
+                source_path: None,
+                content: OFERTA.into(),
+            })
+            .expect("indexar la oferta");
+
+        let retriever = Retriever::new(&f.db, &embedder);
+        let mut con_oferta = 0usize;
+        let mut oferta_en_top5 = 0usize;
+        let mut oferta_la_primera = 0usize;
+
+        println!("{:<62} {:>7} {:>7}", "pregunta", "oferta", "1º");
+        for question in crate::training::QUESTIONS {
+            let recuperado = retriever
+                .search(f.project_id, question.text, DEFAULT_TOP_K)
+                .expect("buscar");
+
+            let de_la_oferta = recuperado
+                .chunks
+                .iter()
+                .filter(|chunk| chunk.chunk.kind == DocumentKind::JobOffer)
+                .count();
+            let primero_es_oferta = recuperado
+                .chunks
+                .first()
+                .is_some_and(|chunk| chunk.chunk.kind == DocumentKind::JobOffer);
+
+            con_oferta += de_la_oferta;
+            if de_la_oferta > 0 {
+                oferta_en_top5 += 1;
+            }
+            if primero_es_oferta {
+                oferta_la_primera += 1;
+            }
+
+            println!(
+                "{:<62} {:>7} {:>7}",
+                &question.text[..62.min(question.text.len())],
+                format!("{de_la_oferta}/{}", recuperado.chunks.len()),
+                if primero_es_oferta { "OFERTA" } else { "cv" }
+            );
+
+            // El margen: si la oferta entra, cuanto le saca o le quita al mejor del CV.
+            let mejor_oferta = recuperado
+                .chunks
+                .iter()
+                .find(|chunk| chunk.chunk.kind == DocumentKind::JobOffer);
+            let mejor_cv = recuperado
+                .chunks
+                .iter()
+                .find(|chunk| chunk.chunk.kind == DocumentKind::Cv);
+            if let (Some(oferta), Some(cv)) = (mejor_oferta, mejor_cv) {
+                println!(
+                    "      mejor oferta {:.4} · mejor cv {:.4} · diferencia {:+.4}",
+                    oferta.similarity,
+                    cv.similarity,
+                    oferta.similarity - cv.similarity
+                );
+            }
+        }
+
+        let total = crate::training::QUESTIONS.len();
+        println!(
+            "\nRESUMEN: {oferta_en_top5} de {total} preguntas traen material de la empresa en \
+             el top 5. {con_oferta} fragmentos de oferta sobre {} sitios. La oferta es el \
+             primer resultado en {oferta_la_primera} preguntas.",
+            total * DEFAULT_TOP_K
+        );
+
+        // Sin asercion sobre el reparto a proposito: esta es la medicion con la que se
+        // decide si hace falta pesar. Fijarla ahora seria grabar en un test la conclusion
+        // que todavia no se ha sacado.
+        assert!(total > 0);
+    }
 }

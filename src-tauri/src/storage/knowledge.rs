@@ -42,6 +42,30 @@ impl DocumentKind {
             _ => Self::Other,
         }
     }
+
+    /// Si este texto lo escribe la **empresa** y no el candidato.
+    ///
+    /// La distincion no es taxonomica, es la que separa lo que el candidato **hizo** de lo
+    /// que la empresa **pide**. Medido el 2026-08-20 (`ARCHITECTURE.md` §5.2): con el CV
+    /// real y una oferta indexados, la oferta entra en el top 5 de 19 de las 20 preguntas
+    /// del banco y es el primer resultado en 12. Ante "cuentame un proyecto complicado", lo
+    /// mejor que recibe el modelo es lo que la empresa busca — y la cita literal de §5 lo
+    /// da por bueno, porque esa frase si esta en los documentos.
+    ///
+    /// Se enumeran todas las variantes a proposito: anadir un tipo de documento nuevo tiene
+    /// que romper la compilacion y obligar a decidir de que lado cae. Un `_ =>` aqui
+    /// declararia en silencio que lo nuevo es material del candidato, que es el lado por el
+    /// que se cuela la experiencia inventada.
+    pub fn speaks_for_the_employer(self) -> bool {
+        match self {
+            Self::JobOffer | Self::Company => true,
+            // `Other` cae del lado del candidato y es la unica de las seis que se decide
+            // en vez de saberse. El usuario lo eligio a mano en un panel que va sobre su
+            // propio material, y dejarlo fuera encogeria su corpus en silencio justo en las
+            // preguntas que mas lo necesitan.
+            Self::Cv | Self::Notes | Self::PreparedAnswers | Self::Other => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -423,7 +423,12 @@ mod tests {
             .expect("crear proyecto");
 
         let encontrado = crate::rag::retriever::Retriever::new(&f.db, &embedder)
-            .search(otra_entrevista.id, "¿Cuál es tu mayor defecto?", 5)
+            .search(
+                otra_entrevista.id,
+                "¿Cuál es tu mayor defecto?",
+                5,
+                crate::rag::retriever::Material::All,
+            )
             .expect("buscar");
 
         assert!(
@@ -446,7 +451,7 @@ mod tests {
     #[ignore = "descarga el modelo real"]
     fn la_respuesta_entrenada_gana_al_cv() {
         use crate::embedding::LocalEmbeddingProvider;
-        use crate::rag::retriever::{Retriever, DEFAULT_TOP_K};
+        use crate::rag::retriever::{Material, Retriever, DEFAULT_TOP_K};
 
         let f = fixture();
         let cache = std::env::temp_dir().join("interview-copilot-models");
@@ -479,7 +484,7 @@ mod tests {
             .expect("indexar la respuesta entrenada");
 
         let recuperado = Retriever::new(&f.db, &embedder)
-            .search(f.project_id, pregunta, DEFAULT_TOP_K)
+            .search(f.project_id, pregunta, DEFAULT_TOP_K, Material::All)
             .expect("buscar");
 
         for chunk in &recuperado.chunks {
@@ -505,7 +510,7 @@ mod tests {
     fn extremo_a_extremo_con_el_modelo_real() {
         use crate::embedding::LocalEmbeddingProvider;
         use crate::rag::extract;
-        use crate::rag::retriever::{Retriever, DEFAULT_TOP_K};
+        use crate::rag::retriever::{Material, Retriever, DEFAULT_TOP_K};
 
         let f = fixture();
         let cache = std::env::temp_dir().join("interview-copilot-models");
@@ -558,6 +563,7 @@ mod tests {
                 f.project_id,
                 "¿Tienes experiencia enseñando a otras personas?",
                 DEFAULT_TOP_K,
+                Material::All,
             )
             .expect("buscar");
 
@@ -684,7 +690,7 @@ mod tests {
     #[ignore = "descarga el modelo real"]
     fn de_donde_salen_los_cinco_fragmentos_que_ve_el_modelo() {
         use crate::embedding::LocalEmbeddingProvider;
-        use crate::rag::retriever::{Retriever, DEFAULT_TOP_K};
+        use crate::rag::retriever::{Material, Retriever, DEFAULT_TOP_K};
 
         let f = fixture();
         let cache = std::env::temp_dir().join("interview-copilot-models");
@@ -706,71 +712,114 @@ mod tests {
             .expect("indexar la oferta");
 
         let retriever = Retriever::new(&f.db, &embedder);
-        let mut con_oferta = 0usize;
-        let mut oferta_en_top5 = 0usize;
-        let mut oferta_la_primera = 0usize;
 
-        println!("{:<62} {:>7} {:>7}", "pregunta", "oferta", "1º");
+        let sin_filtro = reparto(&retriever, f.project_id, Material::All, "SIN FILTRO");
+        let con_filtro = reparto(
+            &retriever,
+            f.project_id,
+            Material::CandidateOnly,
+            "CON FILTRO (Material::CandidateOnly)",
+        );
+
+        let total = crate::training::QUESTIONS.len();
+
+        // Lo que hay que demostrar es lo de siempre en este proyecto: que el arreglo hace
+        // lo que dice, no que exista. Sin filtro, la oferta entraba en casi todas.
+        assert!(
+            sin_filtro.preguntas_contaminadas > total / 2,
+            "sin filtro la oferta solo entraba en {} de {total}: si el corpus ha cambiado \
+             tanto, los numeros de ARCHITECTURE.md §5.2 hay que volver a sacarlos",
+            sin_filtro.preguntas_contaminadas
+        );
+
+        // Y con el filtro, ni una. No es un "muchas menos": el material de la empresa no
+        // tiene grados cuando la pregunta va sobre lo que hizo el candidato.
+        assert_eq!(
+            con_filtro.fragmentos, 0,
+            "el filtro dejo pasar {} fragmentos de la oferta",
+            con_filtro.fragmentos
+        );
+
+        // Y los sitios que libera los tiene que ocupar material del candidato, no dejarlos
+        // vacios. Un top 5 que se queda en tres es media respuesta.
+        assert_eq!(
+            con_filtro.sitios_llenos,
+            total * DEFAULT_TOP_K,
+            "el filtro dejo huecos: {} fragmentos de los {} que caben",
+            con_filtro.sitios_llenos,
+            total * DEFAULT_TOP_K
+        );
+    }
+
+    /// Lo que sale de recorrer el banco entero con un material dado.
+    struct Reparto {
+        preguntas_contaminadas: usize,
+        fragmentos: usize,
+        primeras: usize,
+        sitios_llenos: usize,
+    }
+
+    /// Recorre las veinte preguntas y cuenta cuanto material de la empresa se cuela.
+    fn reparto(
+        retriever: &crate::rag::retriever::Retriever<'_>,
+        project_id: i64,
+        material: crate::rag::retriever::Material,
+        titulo: &str,
+    ) -> Reparto {
+        use crate::rag::retriever::DEFAULT_TOP_K;
+
+        let mut out = Reparto {
+            preguntas_contaminadas: 0,
+            fragmentos: 0,
+            primeras: 0,
+            sitios_llenos: 0,
+        };
+
+        println!("\n=== {titulo} ===");
+        println!("{:<62} {:>7} {:>7}", "pregunta", "empresa", "1º");
+
         for question in crate::training::QUESTIONS {
             let recuperado = retriever
-                .search(f.project_id, question.text, DEFAULT_TOP_K)
+                .search(project_id, question.text, DEFAULT_TOP_K, material)
                 .expect("buscar");
 
-            let de_la_oferta = recuperado
+            let de_la_empresa = recuperado
                 .chunks
                 .iter()
-                .filter(|chunk| chunk.chunk.kind == DocumentKind::JobOffer)
+                .filter(|chunk| chunk.chunk.kind.speaks_for_the_employer())
                 .count();
-            let primero_es_oferta = recuperado
+            let primero_es_empresa = recuperado
                 .chunks
                 .first()
-                .is_some_and(|chunk| chunk.chunk.kind == DocumentKind::JobOffer);
+                .is_some_and(|chunk| chunk.chunk.kind.speaks_for_the_employer());
 
-            con_oferta += de_la_oferta;
-            if de_la_oferta > 0 {
-                oferta_en_top5 += 1;
+            out.fragmentos += de_la_empresa;
+            out.sitios_llenos += recuperado.chunks.len();
+            if de_la_empresa > 0 {
+                out.preguntas_contaminadas += 1;
             }
-            if primero_es_oferta {
-                oferta_la_primera += 1;
+            if primero_es_empresa {
+                out.primeras += 1;
             }
 
             println!(
                 "{:<62} {:>7} {:>7}",
                 &question.text[..62.min(question.text.len())],
-                format!("{de_la_oferta}/{}", recuperado.chunks.len()),
-                if primero_es_oferta { "OFERTA" } else { "cv" }
+                format!("{de_la_empresa}/{}", recuperado.chunks.len()),
+                if primero_es_empresa { "OFERTA" } else { "cv" }
             );
-
-            // El margen: si la oferta entra, cuanto le saca o le quita al mejor del CV.
-            let mejor_oferta = recuperado
-                .chunks
-                .iter()
-                .find(|chunk| chunk.chunk.kind == DocumentKind::JobOffer);
-            let mejor_cv = recuperado
-                .chunks
-                .iter()
-                .find(|chunk| chunk.chunk.kind == DocumentKind::Cv);
-            if let (Some(oferta), Some(cv)) = (mejor_oferta, mejor_cv) {
-                println!(
-                    "      mejor oferta {:.4} · mejor cv {:.4} · diferencia {:+.4}",
-                    oferta.similarity,
-                    cv.similarity,
-                    oferta.similarity - cv.similarity
-                );
-            }
         }
 
         let total = crate::training::QUESTIONS.len();
         println!(
-            "\nRESUMEN: {oferta_en_top5} de {total} preguntas traen material de la empresa en \
-             el top 5. {con_oferta} fragmentos de oferta sobre {} sitios. La oferta es el \
-             primer resultado en {oferta_la_primera} preguntas.",
-            total * DEFAULT_TOP_K
+            "RESUMEN {titulo}: {} de {total} preguntas con material de la empresa en el top 5. \
+             {} fragmentos de oferta sobre {} sitios. La oferta es la primera en {}.",
+            out.preguntas_contaminadas,
+            out.fragmentos,
+            total * DEFAULT_TOP_K,
+            out.primeras
         );
 
-        // Sin asercion sobre el reparto a proposito: esta es la medicion con la que se
-        // decide si hace falta pesar. Fijarla ahora seria grabar en un test la conclusion
-        // que todavia no se ha sacado.
-        assert!(total > 0);
+        out
     }
 }

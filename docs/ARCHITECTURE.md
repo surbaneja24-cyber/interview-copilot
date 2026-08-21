@@ -576,6 +576,41 @@ Así que no es un multiplicador que calibrar sino **un filtro por tipo de pregun
 clasificador de §7 durante la entrevista. Una constante menos que inventar, que es la
 diferencia entre una regla que se puede defender y un número puesto a ojo.
 
+### El filtro, y lo que cambia con él puesto
+
+`Material::{All, CandidateOnly}` en `rag/retriever.rs`. El mismo test recorre el banco dos
+veces, con filtro y sin él, para que la mejora sea un número y no una promesa:
+
+| | Preguntas contaminadas | Fragmentos de oferta | La oferta es la 1ª |
+|---|---|---|---|
+| Sin filtro | 19 de 20 | 36 de 100 | 12 |
+| **Con filtro** | **0 de 20** | **0 de 100** | **0** |
+
+Los 100 sitios siguen llenos, y eso también se comprueba: cuando el filtro deja el top 5 a
+medias se le piden más vecinos al índice, doblando hasta llenarlo o hasta que el índice se
+agote. Los huecos que libera la oferta tienen que ocuparlos fragmentos del candidato, que es
+justo el punto; un top 5 que se queda en tres es media respuesta. Se dobla en vez de pedir
+una cantidad fija porque no hay proporción de material de empresa que valga para todos los
+corpus: depende de lo gorda que sea la oferta frente al CV.
+
+El destaque (`standout`) se sigue midiendo sobre la primera ventana de candidatos y no se
+toca. Si creciera con el pozo dejaría de ser comparable entre preguntas: es una media, y
+ampliar la muestra la mueve sola.
+
+Dónde se aplica hoy, y por qué no en todas partes:
+
+- `AnswerStyle::Behavioral` y `Technical` → `CandidateOnly`. La técnica es la más peligrosa
+  de las tres y por eso no se deja abierta: una oferta enumera justo las herramientas que
+  pide, así que dejarla entrar es servirle al modelo la lista de lo que le conviene decir
+  que sabe.
+- `AnswerStyle::General` → `All`, como estaba. Es el cajón de sastre: ahí caen tanto
+  "cuéntame sobre ti" como "¿por qué quieres trabajar aquí?", y esa segunda **necesita** la
+  oferta. Elegir un lado sería adivinar cuál de las dos tenía el usuario en la cabeza, y no
+  hay nada medido que lo diga. Lo resuelve el clasificador de §7.
+- La búsqueda manual del índice sigue viendo **todo**. Existe para mirar con los ojos lo que
+  hay dentro, así que recortarla la convertiría en otra cosa: quien la usa necesita ver
+  también lo que el filtro deja fuera al contestar.
+
 Lo que **no** mide este test, y hay que decirlo: el peso de las respuestas entrenadas frente
 al CV. Eso sigue con el único dato de §5.1 —0,8746 contra 0,7960— y una sola pregunta.
 

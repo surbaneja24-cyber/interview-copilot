@@ -27,11 +27,45 @@ use serde::Serialize;
 use crate::embedding::EmbeddingProvider;
 use crate::error::AppResult;
 use crate::rag::vector_store;
-use crate::storage::{Db, StoredChunk};
+use crate::storage::{Db, DocumentKind, StoredChunk};
 
 /// Cuantos trozos se recuperan como maximo. Suficiente para dar contexto al LLM sin
 /// inundarlo: cada trozo extra son tokens de prefill, y el prefill es latencia.
 pub const DEFAULT_TOP_K: usize = 5;
+
+/// Que material puede entrar en la recuperacion.
+///
+/// **De donde sale esto, medido el 2026-08-20** (`ARCHITECTURE.md` §5.2): con el CV real y
+/// una oferta del puesto indexados, la oferta entra en el top 5 de **19 de las 20**
+/// preguntas del banco de entrenamiento y es el **primer** resultado en 12. Ante "cuentame
+/// un proyecto complicado en el que hayas trabajado", el mejor fragmento que recibe el
+/// modelo es lo que la empresa **pide**, no lo que el candidato **hizo**. Y la barrera de
+/// §5 lo deja pasar, porque esa frase si esta literalmente en los documentos: es el camino
+/// exacto de inventar experiencia con respaldo verificable.
+///
+/// **Por que no es un peso.** El plan era una constante que hiciera valer menos a la
+/// oferta. La medicion dice que no sirve: la oferta no vale menos siempre, vale menos
+/// segun la pregunta. Para "¿por que quieres trabajar aqui?" o "¿cual es tu
+/// disponibilidad?" es justo el material bueno, y contestar sin leerla seria el error
+/// contrario. Un umbral habria tenido que acertar las dos cosas con un solo numero, que es
+/// el mismo error que ya se midio y se descarto con el aviso de §6.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Material {
+    /// Todo lo indexado. Es lo que quiere la busqueda manual, que existe para ver el
+    /// indice entero y no una version recortada de el.
+    All,
+    /// Solo lo que el candidato ha vivido o ha dicho. Lo que diga la empresa queda fuera.
+    CandidateOnly,
+}
+
+impl Material {
+    fn admits(self, kind: DocumentKind) -> bool {
+        match self {
+            Self::All => true,
+            Self::CandidateOnly => !kind.speaks_for_the_employer(),
+        }
+    }
+}
 
 /// Cuantos vecinos se piden al indice para poder juzgar el destaque. Mas que `top_k`
 /// a proposito: la media de los descartados es justo la referencia que hace falta.
@@ -75,14 +109,19 @@ impl<'a> Retriever<'a> {
         Self { db, embedder }
     }
 
-    pub fn search(&self, project_id: i64, question: &str, top_k: usize) -> AppResult<Retrieval> {
+    pub fn search(
+        &self,
+        project_id: i64,
+        question: &str,
+        top_k: usize,
+        material: Material,
+    ) -> AppResult<Retrieval> {
         let query = self.embedder.embed_query(question)?;
 
-        let matches = self
-            .db
-            .with_conn(|conn| vector_store::search(conn, &query, CANDIDATE_POOL))?;
+        let mut pool = CANDIDATE_POOL;
+        let mut candidates = self.neighbours(&query, pool)?;
 
-        if matches.is_empty() {
+        if candidates.is_empty() {
             return Ok(Retrieval {
                 chunks: Vec::new(),
                 standout: 0.0,
@@ -90,19 +129,51 @@ impl<'a> Retriever<'a> {
             });
         }
 
+        // El destaque se mide sobre esta primera ventana y no se vuelve a tocar. Si
+        // creciera con el pozo de candidatos dejaria de ser comparable entre preguntas:
+        // es una media, y ampliar la muestra la mueve sola.
+        let similarities: Vec<f64> = candidates.iter().map(|chunk| chunk.similarity).collect();
+        let standout_score = standout(&similarities);
+
+        let mut chunks = keep(&candidates, material, top_k);
+
+        // El filtro puede dejar el top_k a medias. Se le piden mas vecinos al indice en vez
+        // de devolver tres fragmentos: los sitios que libera la oferta son sitios que tiene
+        // que ocupar material del candidato, que es justo el punto de filtrar. Se dobla en
+        // vez de pedir una cantidad fija porque no hay proporcion de material de empresa
+        // que valga para todos los corpus — depende de lo gorda que sea la oferta frente al
+        // CV. Termina solo: cuando el indice devuelve menos de lo pedido, ya no queda mas.
+        while chunks.len() < top_k && candidates.len() == pool {
+            pool *= 2;
+            candidates = self.neighbours(&query, pool)?;
+            chunks = keep(&candidates, material, top_k);
+        }
+
+        let _ = project_id;
+
+        Ok(Retrieval {
+            chunks,
+            standout: standout_score,
+            weak_signal: standout_score < WEAK_STANDOUT,
+        })
+    }
+
+    /// Los `limit` vecinos mas cercanos, ya con su texto y en orden de similitud.
+    fn neighbours(&self, query: &[f32], limit: usize) -> AppResult<Vec<RetrievedChunk>> {
+        let matches = self
+            .db
+            .with_conn(|conn| vector_store::search(conn, query, limit))?;
+
+        let ids: Vec<i64> = matches.iter().map(|hit| hit.chunk_id).collect();
         let similarities: Vec<f64> = matches
             .iter()
             .map(|hit| similarity_from_distance(hit.distance))
             .collect();
 
-        let standout_score = standout(&similarities);
-
-        // Los vectores del indice pueden incluir trozos de otros proyectos: se filtran
-        // aqui, despues de puntuar, para que el destaque se mida contra todo el corpus.
-        let ids: Vec<i64> = matches.iter().map(|hit| hit.chunk_id).collect();
+        // `chunks_by_id` devuelve en el orden de `ids`, que es el del indice: por distancia.
         let stored = self.db.chunks_by_id(&ids)?;
 
-        let project_chunks: Vec<RetrievedChunk> = stored
+        Ok(stored
             .into_iter()
             .filter_map(|chunk| {
                 let position = ids.iter().position(|id| *id == chunk.id)?;
@@ -111,17 +182,18 @@ impl<'a> Retriever<'a> {
                     similarity: *similarities.get(position)?,
                 })
             })
-            .take(top_k)
-            .collect();
-
-        let _ = project_id;
-
-        Ok(Retrieval {
-            chunks: project_chunks,
-            standout: standout_score,
-            weak_signal: standout_score < WEAK_STANDOUT,
-        })
+            .collect())
     }
+}
+
+/// Los `top_k` primeros que el material admita, conservando el orden de similitud.
+fn keep(candidates: &[RetrievedChunk], material: Material, top_k: usize) -> Vec<RetrievedChunk> {
+    candidates
+        .iter()
+        .filter(|candidate| material.admits(candidate.chunk.kind))
+        .take(top_k)
+        .cloned()
+        .collect()
 }
 
 /// sqlite-vec devuelve distancia L2. Con vectores normalizados, d² = 2 − 2·cos, de donde

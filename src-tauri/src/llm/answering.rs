@@ -29,7 +29,7 @@ use crate::llm::answer::{self, ScanEvent, StreamScanner};
 use crate::llm::prompt::{self, AnswerStyle, FragmentSet};
 use crate::llm::verify::{self, DroppedCitation, Unsupported, Verdict, VerifiedCitation};
 use crate::llm::{ChatRequest, LlmProvider, LlmSettings};
-use crate::rag::retriever::{Retriever, DEFAULT_TOP_K};
+use crate::rag::retriever::{Material, Retriever, DEFAULT_TOP_K};
 use crate::storage::Db;
 
 /// Lo que la UI sabe de un fragmento enviado. Es deliberadamente escueto: §31 pide no
@@ -96,7 +96,7 @@ impl Answering<'_> {
     ) -> AppResult<()> {
         let started = Instant::now();
 
-        let fragments = self.retrieve(project_id, question)?;
+        let fragments = self.retrieve(project_id, question, style)?;
         if fragments.is_empty() {
             emit(unsupported_event(Unsupported::NoContext, style));
             return Ok(());
@@ -141,9 +141,18 @@ impl Answering<'_> {
         Ok(())
     }
 
-    fn retrieve(&self, project_id: i64, question: &str) -> AppResult<FragmentSet> {
-        let retrieval =
-            Retriever::new(self.db, self.embedder).search(project_id, question, DEFAULT_TOP_K)?;
+    fn retrieve(
+        &self,
+        project_id: i64,
+        question: &str,
+        style: AnswerStyle,
+    ) -> AppResult<FragmentSet> {
+        let retrieval = Retriever::new(self.db, self.embedder).search(
+            project_id,
+            question,
+            DEFAULT_TOP_K,
+            material_for(style),
+        )?;
 
         Ok(FragmentSet::from_retrieval(&retrieval.chunks))
     }
@@ -213,6 +222,29 @@ fn emit_failure(err: AppError, emit: &mut (dyn FnMut(AnswerEvent) + Send)) -> Ap
         message: err.to_string(),
     });
     Ok(())
+}
+
+/// Que material puede sostener una respuesta de este estilo.
+///
+/// Medido el 2026-08-20 (`ARCHITECTURE.md` §5.2): con una oferta indexada junto al CV, la
+/// oferta entra en el top 5 de 19 de las 20 preguntas del banco y es la primera en 12. Ante
+/// "cuentame un proyecto complicado", el modelo recibe como mejor prueba de la experiencia
+/// del candidato un documento que dice lo que la empresa busca.
+///
+/// - `Behavioral` cuenta algo que paso. Si no salio del candidato, no paso.
+/// - `Technical` es el caso mas peligroso de los tres, y por eso no se deja abierto: una
+///   oferta enumera justo las herramientas que pide, asi que dejarla entrar es servirle al
+///   modelo la lista de lo que le conviene decir que sabe.
+/// - `General` se queda como estaba, admitiendo todo. Es el cajon de sastre de los tres:
+///   ahi caen tanto "cuentame sobre ti" como "¿por que quieres trabajar aqui?", y esa
+///   segunda **necesita** la oferta. Elegir un lado seria adivinar cual de las dos tenia el
+///   usuario en la cabeza, y no hay nada medido que lo diga. Lo resuelve el clasificador de
+///   §7, que si distingue por tipo de pregunta.
+fn material_for(style: AnswerStyle) -> Material {
+    match style {
+        AnswerStyle::Behavioral | AnswerStyle::Technical => Material::CandidateOnly,
+        AnswerStyle::General => Material::All,
+    }
 }
 
 fn unsupported_event(reason: Unsupported, style: AnswerStyle) -> AnswerEvent {

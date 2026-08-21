@@ -301,10 +301,12 @@ ese material con sus palabras.
       resultado en 12**. Ante "cuéntame un proyecto complicado", lo mejor que recibe el
       modelo es lo que la empresa pide — y la cita literal de §5 lo da por bueno. El detalle
       está en `ARCHITECTURE.md` §5.2
-- [ ] **Filtrar la oferta por tipo de pregunta**, que es lo que sustituye al peso por origen:
-      medido, la oferta no vale menos siempre sino según la pregunta, y el reparto sigue al
-      `QuestionKind` que ya existe. Fuera en `Behavioral` / `Experience` / `SelfAssessment`,
-      dentro en `Motivation` / `Logistics`
+- [x] **Filtrar el material de la empresa según la pregunta**, que es lo que sustituyó al
+      peso por origen: medido, la oferta no vale menos siempre sino según la pregunta.
+      `Material::{All, CandidateOnly}` en el retriever, y el mismo test recorre el banco con
+      filtro y sin él: **de 19 de 20 preguntas contaminadas a 0**, con los 100 sitios
+      llenos. Aplicado en `Behavioral` y `Technical`; `General` se queda abierto porque es
+      ambiguo y lo resuelve §7
 - [ ] Peso de las respuestas entrenadas frente al CV: sigue sin medirse más allá de una sola
       pregunta (0,8746 contra 0,7960 en §5.1). Hoy gana por similitud sola
 - [ ] Huecos detectados: una pregunta sin material se convierte en la siguiente pregunta de

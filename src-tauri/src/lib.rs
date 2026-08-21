@@ -23,7 +23,7 @@ use llm::answering::{self, AnswerEvent};
 use llm::prompt::AnswerStyle;
 use llm::{LlmSettings, ProviderKind};
 use rag::indexer::{IndexReport, Indexer};
-use rag::retriever::{Retrieval, Retriever, DEFAULT_TOP_K};
+use rag::retriever::{Material, Retrieval, Retriever, DEFAULT_TOP_K};
 use rag::{extract, vector_store};
 use state::{AppState, CaptureSnapshot, ModelStatus};
 use stt::{SttModel, TranscriptState};
@@ -204,7 +204,15 @@ async fn search_context(
     }
 
     let embedder = state.embedder()?;
-    Retriever::new(&state.db, embedder.as_ref()).search(project_id, &question, DEFAULT_TOP_K)
+    // Ensena el indice entero, incluida la oferta. Es la herramienta para mirar con los
+    // ojos lo que hay dentro, asi que recortarla la convertiria en otra cosa: quien la usa
+    // necesita ver **tambien** lo que el filtro de §5.2 deja fuera al contestar.
+    Retriever::new(&state.db, embedder.as_ref()).search(
+        project_id,
+        &question,
+        DEFAULT_TOP_K,
+        Material::All,
+    )
 }
 
 #[tauri::command]

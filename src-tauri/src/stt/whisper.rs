@@ -25,10 +25,30 @@ fn threads() -> i32 {
     i32::try_from(cores.saturating_sub(1).max(1)).unwrap_or(1)
 }
 
+/// Las palancas de decodificacion que no son el modelo.
+///
+/// Existen para poder compararlas con numeros antes de cambiar nada: el banco de
+/// `stt/benchmark.rs` recorre las combinaciones y saca el WER de cada una. El
+/// `Default` es **exactamente el comportamiento de hoy**, para que la comparacion tenga
+/// una linea base honesta y para que adoptar una mejora sea cambiar este `Default` y no
+/// reescribir la transcripcion.
+#[derive(Debug, Clone, Default)]
+pub struct Tuning {
+    /// Texto que orienta al decodificador antes de empezar. En entrenamiento sabemos que
+    /// pregunta se esta contestando, asi que dársela es gratis y le pone el vocabulario
+    /// delante.
+    pub initial_prompt: Option<String>,
+    /// Prohibir los tokens que no son habla: `[Música]`, `[Aplausos]` y los guiones de
+    /// subtitulo. **whisper.cpp lo trae apagado**, y `[Música]` es justo lo que se guardo
+    /// como respuesta de entrenamiento el 2026-08-21 sobre un turno de 64 ms.
+    pub suppress_non_speech: bool,
+}
+
 pub struct LocalWhisper {
     id: String,
     context: WhisperContext,
     threads: i32,
+    tuning: Tuning,
 }
 
 impl LocalWhisper {
@@ -51,7 +71,19 @@ impl LocalWhisper {
             id: id.to_owned(),
             context,
             threads: threads(),
+            tuning: Tuning::default(),
         })
+    }
+
+    /// Cambia los ajustes de decodificacion.
+    ///
+    /// Detras de `cfg(test)` a proposito: el unico que los mueve hoy es el banco que los
+    /// esta midiendo. El dia que una medicion justifique otro comportamiento, lo que
+    /// cambia es el `Default` de `Tuning` —una linea— y no aparece un ajuste mas que nadie
+    /// sabe si conviene tocar.
+    #[cfg(test)]
+    pub fn tune(&mut self, tuning: Tuning) {
+        self.tuning = tuning;
     }
 }
 
@@ -83,6 +115,11 @@ impl SttProvider for LocalWhisper {
         // La entrevista es del usuario, no una clase de idiomas: traducir al ingles lo que
         // se dice en espanol seria cambiar la pregunta antes de responderla.
         params.set_translate(false);
+
+        if let Some(prompt) = self.tuning.initial_prompt.as_deref() {
+            params.set_initial_prompt(prompt);
+        }
+        params.set_suppress_nst(self.tuning.suppress_non_speech);
 
         state
             .full(params, samples)

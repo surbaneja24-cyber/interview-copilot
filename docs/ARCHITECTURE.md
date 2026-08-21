@@ -401,6 +401,66 @@ El idioma está fijado a español hasta que exista el selector de §14. Dejar qu
 detecte cuesta una pasada más y acierta peor con frases cortas, que es exactamente lo que
 son los turnos de una entrevista.
 
+## 4.4 Medir la calidad de una transcripcion: WER, y por que no un parecido (2026-08-21)
+
+Hasta ahora "se entiende bien" era una opinion. `stt/wer.rs` la convierte en un numero, y
+`stt/benchmark.rs` lo usa para comparar configuraciones sobre el mismo audio.
+
+**Por que WER y no una libreria de similitud difusa.** La tentacion era `thefuzz` o
+equivalente: un porcentaje de parecido y listo. No sirve, y no por ser de Python —que
+tambien— sino porque **mezcla los tres errores en uno**. Los tres fallos que se guardaron
+como respuestas de entrenamiento el 2026-08-21 son de tipos distintos y llevan a sitios
+opuestos:
+
+| Lo que se guardo | Que error es | A donde lleva |
+|---|---|---|
+| "Santiago y tengo 21 años" por "Me llamo Santiago…" | dos **borrados** | el audio no llego: es el VAD, no el modelo |
+| "[Música]" sobre un turno de 64 ms | la referencia entera perdida | turno espurio: sobra el turno, no el modelo |
+| "¡Aguien es bien!" | **sustituciones** | aqui si: modelo o senal de entrada |
+
+Cero sustituciones con dos borrados dice que el modelo entendio perfectamente lo que le
+llego. Un parecido del 85% no distingue ese caso del contrario, y elegir mal cuesta el dia.
+
+Las reglas de comparacion son las mismas dos indulgencias de §5, por el mismo motivo:
+mayusculas y puntuacion no cuentan —whisper puntua a su manera y penalizarlo seria medir su
+estilo—, **los acentos si**, porque en español "años" y "anos" son palabras distintas.
+
+### Lo medido, y el control que lo hace creible
+
+Seis frases del dominio del CV real, dichas por el sintetizador de Windows a 16 kHz mono y
+metidas directamente a whisper, sin microfono ni VAD de por medio:
+
+| Configuracion | WER | S | B | I | x tiempo real |
+|---|---|---|---|---|---|
+| `base`, como esta hoy | 0,089 | 4 | 3 | 1 | 0,40 |
+| `base` + `suppress_nst` | 0,089 | 4 | 3 | 1 | 0,38 |
+| `base` + la pregunta como contexto | 0,089 | 4 | 3 | 1 | 0,37 |
+| `base` + las dos | 0,089 | 4 | 3 | 1 | 0,37 |
+| **CONTROL: prompt con faltas** | **0,122** | **7** | 3 | 1 | 0,38 |
+
+**Ninguna de las dos palancas baratas mejora nada.** Y la fila del control es la que da
+derecho a afirmarlo: un contexto inicial lleno de faltas deliberadas ("PIKING",
+"KARRETILLERO") empeora el WER de 0,089 a 0,122, lo que demuestra que el prompt **si llega
+al decodificador**. Sin esa fila, "el prompt no cambia nada" y "el prompt no se esta
+aplicando" se leerian igual en la tabla, y son conclusiones opuestas.
+
+Que `suppress_nst` no cambie nada aqui era de esperar y no lo descarta: sobre voz limpia no
+hay tokens de no-habla que suprimir. Su caso es el turno de 64 ms, que este banco **no puede
+producir** porque entra por el VAD, no por el modelo.
+
+De paso queda medido otro numero: `base` sobre voz sintetica limpia da **0,089 de WER**. Las
+respuestas reales de Santiago salieron incomparablemente peor ("¡Aguien es bien!"). Esa
+distancia no la explica el modelo —es el mismo—, asi que esta en el camino del audio: nivel
+de entrada, microfono o VAD. Es el siguiente sitio donde mirar, y no el tamaño del modelo.
+
+### Lo que el banco no puede ver
+
+- **El principio comido.** El audio entra por fichero, asi que el recorte del VAD no existe
+  aqui. Un WER bueno en esta tabla no dice que la cadena funcione: dice que el modelo
+  entiende lo que le llega.
+- **La voz real.** El sintetizador habla mas limpio que nadie por un micro de auriculares.
+  Los numeros ordenan configuraciones entre si; no predicen el acierto sobre una persona.
+
 ## 5. La regla de no inventar experiencia (§6)
 
 Es un requisito de producto, así que se implementa como control explícito y no como una frase en el prompt. Lo que sigue documenta **un intento fallido y la solución que lo sustituye**, porque el intento fallido es justo el que la intuición vuelve a sugerir.

@@ -5,7 +5,13 @@
 //! nube entra en la Fase 8: lo que no se hace es inventarse ya el segundo, que seria
 //! disenar contra un protocolo que nadie ha probado.
 
+mod benchmark;
 pub mod transcriber;
+/// Instrumental de medida, no codigo de la aplicacion: mide lo que se equivoca una
+/// transcripcion para poder comparar configuraciones con numeros. Va detras de `cfg(test)`
+/// porque nada de la app lo usa, y compilar lo que nadie llama es deuda desde el dia uno.
+#[cfg(test)]
+pub mod wer;
 pub mod whisper;
 
 use std::path::{Path, PathBuf};

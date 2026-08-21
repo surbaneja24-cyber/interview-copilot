@@ -391,7 +391,8 @@ Tres decisiones de diseño, y ninguna es de estilo:
 
 Hay un colchón de 256 ms antes de que el turno se dé por empezado (`PREROLL_FRAMES`): abrir
 turno exige dos ventanas con voz, y para cuando se abre esas dos ya han pasado. Sin él, la
-transcripción empezaría a mitad de la primera sílaba.
+transcripción empezaría a mitad de la primera sílaba. **Medido el 2026-08-21 en §4.5: hacen
+falta entre 8 y 54 ms, asi que sobra por cinco.**
 
 **Lo que todavía no hace:** trocear turnos de más de 30 s, que es la ventana de whisper. Hoy
 se recorta y se avisa en el log; la solución es la transcripción incremental sobre ventanas
@@ -460,6 +461,95 @@ de entrada, microfono o VAD. Es el siguiente sitio donde mirar, y no el tamaño 
   entiende lo que le llega.
 - **La voz real.** El sintetizador habla mas limpio que nadie por un micro de auriculares.
   Los numeros ordenan configuraciones entre si; no predicen el acierto sobre una persona.
+
+## 4.5 Que el colchon de arranque no era el culpable (2026-08-21)
+
+§4.4 dejo la pregunta abierta: `base` da 0,089 de WER sobre voz limpia y las respuestas
+reales salieron incomparablemente peor, asi que el fallo esta en el camino del audio y no en
+el modelo. La sospecha nombrada era `PREROLL_FRAMES`, los 256 ms de colchon que se guardan
+antes de dar el turno por empezado, anotados en §4.3 como "de sobra y practicamente gratis"
+sin haberlo medido nunca.
+
+`audio/benchmark.rs` lo mide. Compara dos instantes sobre el mismo audio: donde empieza la
+senal de verdad —por energia, en ventanas de 5 ms, y no con el propio VAD, que daria cero
+por construccion— y donde `TurnDetector` abre turno. La diferencia es **el colchon que haria
+falta para no perder nada**.
+
+Las seis frases son las mismas de §4.4, y eso no es comodidad: los dos bancos miden la misma
+cadena rota por sitios distintos, y comparar numeros sacados de audio distinto no diria nada.
+Por eso el sintetizador, el lector de WAV y el corpus se mudaron a `testing.rs`; llegaron a
+estar escritos tres veces, y tres copias de un instrumento son tres instrumentos en cuanto se
+toca una.
+
+### Lo medido
+
+| Condicion | Abre | Colchon max | Colchon medio | Perdido con los 256 ms de hoy |
+|---|---|---|---|---|
+| volumen entero | 6/6 | 54 ms | 35 ms | **0** |
+| a la mitad | 6/6 | 54 ms | 40 ms | **0** |
+| a la cuarta parte | 6/6 | 54 ms | 40 ms | **0** |
+| a la decima parte | 6/6 | 54 ms | 40 ms | **0** |
+| CONTROL: 1 s de silencio delante | 6/6 | 50 ms | 37 ms | **0** |
+
+**`PREROLL_FRAMES` no se queda corto: sobra por cinco.** Hacen falta entre 8 y 54 ms y hay
+256. La hipotesis que llevaba abierta desde el 2026-08-21 por la manana queda descartada, y
+con ella la tentacion de subir la constante, que habria costado el dia sin tocar la causa.
+
+**Y la ganancia no mueve nada.** A la decima parte de volumen Silero sigue dando 1,000 de
+probabilidad y abre el turno en el mismo sitio. Un microfono flojo, por si solo, no produce
+un principio comido. Eso deja el fallo (a) —400 a 700 ms perdidos del arranque— sin
+explicacion en el VAD, y el siguiente sitio donde mirar es **el tiempo que tarda el
+dispositivo en entregar la primera muestra despues de abrirlo**: si el modo diapositiva abre
+el microfono y ensena la pregunta a la vez, lo que se habla mientras Windows abre la sesion
+de audio no es que se descarte, es que no existe. Los 400-700 ms encajan con eso mucho mejor
+que con un colchon de 256.
+
+### Los tres controles, y por que hacen falta aqui mas que nunca
+
+Esta tabla es un **resultado nulo por partida doble** —ni el colchon ni la ganancia cambian
+nada— y un resultado nulo sin control no se distingue de un banco desenchufado:
+
+1. **Un segundo de ceros delante.** El instante en que abre se corre un segundo entero y el
+   colchon necesario no se mueve mas de una ventana. Si se moviera, la tabla estaria midiendo
+   el relleno en vez del arranque.
+2. **El detector de energia no mira el volumen.** El arranque se busca contra el pico del
+   propio fichero, asi que sale identico a las cuatro ganancias — y el test lo exige. Si
+   cambiara con la ganancia, la columna del colchon estaria midiendo el detector de energia y
+   no el VAD, que es justo la conclusion contraria.
+3. **Tres segundos de ceros no abren ningun turno.** Si lo abrieran, ninguna fila de arriba
+   significaria nada.
+
+### El turno corto, que es el otro banco
+
+El fallo (b) es un turno espurio de 64 ms al abrir el microfono, que produjo `[Música]` y se
+guardo solo. Sesenta y cuatro milisegundos son exactamente las dos ventanas que exige
+`FRAMES_TO_START`. Para poder tirar ese turno hay que saber donde esta el suelo de una
+respuesta corta legitima, porque tirar tambien los "si" seria cambiar un fallo por otro:
+
+| Palabra | Voz del turno |
+|---|---|
+| "No." | **256 ms** |
+| "Sí." | 288 ms |
+| "Ya." | 288 ms |
+| "Vale." | 352 ms |
+| "Ajá." | 352 ms |
+| "Correcto." | 544 ms |
+
+**El turno legitimo mas corto dura 256 ms y el transitorio duro 64: hay 192 ms de margen.**
+Cabe de sobra una duracion minima de turno que separe las dos cosas sin tocar ni el umbral ni
+la histeresis, que es la parte del VAD que si esta calibrada contra algo.
+
+### Lo que estos bancos no pueden ver
+
+- **El transitorio de apertura.** Lo produce el dispositivo al abrirse, no un fichero, asi
+  que aqui no existe. Del transitorio real hay **una sola observacion**, la del 2026-08-21, y
+  una observacion no es una distribucion: el suelo de 256 ms se puede defender, el techo de
+  64 no. La otra mitad de la fila la tiene que traer un volcado de turnos cortos desde la app.
+- **El suelo de ruido.** Bajar la ganancia de un fichero limpio baja tambien su ruido, y un
+  microfono flojo de verdad no hace eso: la voz baja y el ruido de sala se queda donde estaba.
+  La fila "a la decima parte" descarta que el volumen por si solo retrase el arranque; no
+  descarta que una relacion senal-ruido mala lo haga.
+- **La voz real**, igual que en §4.4. El sintetizador habla mas limpio que nadie.
 
 ## 5. La regla de no inventar experiencia (§6)
 

@@ -5,6 +5,7 @@
 //! proposito: separar por fuente es lo que distingue quien habla en el MVP 1, sin tener
 //! que reconocer voces.
 
+mod benchmark;
 pub mod capture;
 pub mod level;
 pub mod resample;

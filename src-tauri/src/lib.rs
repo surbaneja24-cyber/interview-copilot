@@ -10,6 +10,8 @@ mod secrets;
 mod state;
 mod storage;
 mod stt;
+/// Instrumental compartido por los bancos de medida, no codigo de la aplicacion.
+mod testing;
 mod training;
 
 use std::path::PathBuf;

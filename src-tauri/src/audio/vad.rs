@@ -477,7 +477,7 @@ mod tests {
     fn voz_de_un_wav_con_y_sin_silencio_delante() {
         let model = std::env::var("INTERVIEW_COPILOT_VAD").expect("INTERVIEW_COPILOT_VAD");
         let wav = std::env::var("INTERVIEW_COPILOT_WAV").expect("INTERVIEW_COPILOT_WAV");
-        let muestras = leer_wav_a_16k(&wav);
+        let muestras = crate::testing::lee_wav_16k(Path::new(&wav));
 
         for silencio_s in [0usize, 1, 5] {
             let mut audio =
@@ -502,32 +502,6 @@ mod tests {
                 "con {silencio_s} s de silencio delante el modelo apenas vio voz                  ({maxima:.3}): revisa el contexto de {CONTEXT_SAMPLES} muestras"
             );
         }
-    }
-
-    /// Lee un WAV PCM de 16 bits y lo deja en 16 kHz mono, por el mismo camino que el
-    /// audio en vivo: si el remuestreo estropea la senal, este test se entera.
-    fn leer_wav_a_16k(path: &str) -> Vec<f32> {
-        let bytes = std::fs::read(path).expect("leer el wav");
-        let canales = u16::from_le_bytes([bytes[22], bytes[23]]);
-        let frecuencia = u32::from_le_bytes([bytes[24], bytes[25], bytes[26], bytes[27]]);
-        let data = bytes
-            .windows(4)
-            .position(|w| w == b"data")
-            .map(|pos| pos + 8)
-            .expect("el wav no trae bloque data");
-
-        let crudas: Vec<f32> = bytes[data..]
-            .chunks_exact(2)
-            .map(|par| i16::from_le_bytes([par[0], par[1]]) as f32 / 32768.0)
-            .collect();
-
-        let mut muestras = Vec::new();
-        crate::audio::resample::to_mono_16k(&crudas, canales, frecuencia, &mut muestras);
-        println!(
-            "{frecuencia} Hz, {canales} canales -> {} muestras a 16 kHz",
-            muestras.len()
-        );
-        muestras
     }
 
     /// Con el modelo de verdad, sobre audio de verdad: silencio digital tiene que dar
@@ -575,8 +549,13 @@ mod tests {
 ///
 /// Abrir turno exige dos ventanas con voz, y para cuando se abre, esas dos ya han pasado.
 /// Sin este colchon, la transcripcion empezaria por la mitad de la primera silaba. Ocho
-/// ventanas son 256 ms, de sobra y practicamente gratis.
-const PREROLL_FRAMES: usize = 8;
+/// ventanas son 256 ms.
+///
+/// "De sobra y practicamente gratis" decia aqui, sin haberlo medido. **Medido el
+/// 2026-08-21** por `audio::benchmark`: sobre las seis frases del corpus hacen falta entre
+/// 8 y 54 ms, asi que sobra por cinco, y no cambia al bajar la ganancia hasta la decima
+/// parte. Lo que se come 400-700 ms del arranque en la app **no es esto**.
+pub(crate) const PREROLL_FRAMES: usize = 8;
 
 /// Tope de audio por turno. whisper trabaja con ventanas de 30 s; mas alla hay que trocear,
 /// y eso llega con la transcripcion incremental.

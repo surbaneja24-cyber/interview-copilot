@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { startCapture, stopCapture, transcript } from '@/ipc/commands';
+import { captureStatus, startCapture, stopCapture, transcript } from '@/ipc/commands';
 import { describeError } from '@/hooks/useAsync';
-import type { TranscriptState } from '@/ipc/types';
+import type { TranscriptEntry, TranscriptState, VadState } from '@/ipc/types';
 
 /** Cada cuánto se mira si hay transcripción nueva. */
 const POLL_MS = 400;
@@ -21,6 +21,10 @@ const POLL_MS = 400;
 export function useDictation(onText: (texto: string) => void) {
   const [dictating, setDictating] = useState(false);
   const [state, setState] = useState<TranscriptState | null>(null);
+  // El estado del detector de voz, para poder enseñar los turnos que se tiran por cortos.
+  // Se pide en el mismo tic que la transcripción: son dos lecturas de atómicos, y tener el
+  // contador donde nadie lo ve es igual que no tenerlo — ya pasó el 2026-08-22.
+  const [vad, setVad] = useState<VadState | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const timer = useRef<number | null>(null);
@@ -115,6 +119,15 @@ export function useDictation(onText: (texto: string) => void) {
             .catch(() => {
               // Un fallo al consultar no puede tirar lo que ya se ha dictado.
             });
+
+          captureStatus()
+            .then((snapshot) => {
+              if (attempt.current !== mine) return;
+              setVad(snapshot.mic.vad);
+            })
+            .catch(() => {
+              // El medidor es diagnóstico: que falle no puede parar el dictado.
+            });
         }, POLL_MS);
       })
       .catch((cause: unknown) => {
@@ -136,11 +149,30 @@ export function useDictation(onText: (texto: string) => void) {
           .filter(Boolean)
           .join(' · ');
 
+  /** El último turno transcrito, con lo que duró y lo que costó transcribirlo. */
+  const lastTurn: TranscriptEntry | null =
+    state === null || state.entries.length === 0
+      ? null
+      : (state.entries[state.entries.length - 1] ?? null);
+
   return {
     dictating,
     start,
     stop,
     status,
+    lastTurn,
+    /** Turnos esperando a whisper. Mayor que cero es "está transcribiendo". */
+    pending: state?.pending ?? 0,
+    /** Turnos tirados por demasiado cortos desde que se abrió el micrófono. */
+    discarded: vad?.discarded ?? 0,
+    /**
+     * Si el detector oye voz **ahora**, con hasta un tic de retraso.
+     *
+     * Es lo que permite que seguir hablando cancele la cuenta atrás sin esperar a que el
+     * texto llegue. El texto tarda unos tres segundos y medio (§4.7): esperarlo para saber
+     * que alguien sigue hablando es enterarse tarde.
+     */
+    speaking: vad?.turn === 'speaking',
     /** Fallo del transcriptor, que no es lo mismo que un fallo al abrir el micrófono. */
     transcriptError: state?.error ?? null,
     error,

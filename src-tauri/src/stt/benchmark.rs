@@ -199,3 +199,104 @@ fn compara_configuraciones_de_transcripcion() {
          tabla no mide lo que dice"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Lo que cuesta transcribir, y si depende de lo que dure el turno
+// ---------------------------------------------------------------------------
+
+/// **Cuanto tarda whisper segun lo largo que sea el turno.**
+///
+/// Sale de una queja de campo del 2026-08-22: "tarda bastante en transcribir". Antes de
+/// arreglar nada hay que saber **de que depende** ese rato, porque las dos posibilidades
+/// llevan a soluciones opuestas:
+///
+/// - Si el coste crece con la duracion, transcribir por trozos mientras el candidato habla
+///   —la transcripcion incremental que la Fase 4 tiene pendiente— reparte ese coste y la
+///   espera final se hace pequena.
+/// - Si el coste es **plano**, no. whisper rellena su entrada hasta 30 s de mel siempre, asi
+///   que un turno de 3 s podria costar casi lo mismo que uno de 25. Y entonces trocear no
+///   reparte nada: **multiplica**, porque cada trozo paga la ventana entera otra vez.
+///
+/// Se mide sobre el mismo audio acumulado, no sobre grabaciones distintas: comparar
+/// duraciones con contenidos distintos mediria el contenido.
+///
+/// ## El control
+///
+/// La ultima fila transcribe **las seis frases por separado** y suma. Es exactamente lo que
+/// haria la transcripcion incremental, y es lo que convierte esta tabla en una decision en
+/// vez de en una curiosidad: si trocear sale mas caro que la pasada unica, la mejora
+/// pendiente de la Fase 4 esta descartada tal y como esta escrita.
+///
+/// `INTERVIEW_COPILOT_WHISPER=<ggml-base.bin> cargo test --lib -- --ignored --nocapture --test-threads=1 cuanto_cuesta_transcribir`
+#[test]
+#[ignore = "sintetiza voz, carga whisper y tarda"]
+fn cuanto_cuesta_transcribir_segun_la_duracion() {
+    let modelo = std::env::var("INTERVIEW_COPILOT_WHISPER").expect("INTERVIEW_COPILOT_WHISPER");
+    let dir = testing::banco_dir("stt");
+    let muestras = testing::audios_del_corpus(&dir);
+
+    let mut whisper =
+        LocalWhisper::load(&PathBuf::from(&modelo), "whisper-base").expect("cargar whisper");
+
+    // Una pasada en vacio para no medir la primera vez, que carga tablas y calienta cache.
+    let _ = whisper.transcribe(&muestras[0], Some("es"));
+
+    println!(
+        "{:<28} {:>10} {:>10} {:>12}",
+        "audio", "duracion s", "coste ms", "x tiempo real"
+    );
+
+    // La sexta frase se sale de los 30 s que admite una pasada de whisper, y el propio
+    // proveedor lo rechaza. Que el tope aparezca aqui solo es una confirmacion de que la
+    // limitacion de §4.3 es real y no teorica.
+    const CABEN: usize = 5;
+
+    let mut acumulado: Vec<f32> = Vec::new();
+    let mut filas = Vec::new();
+    for (indice, frase) in muestras.iter().take(CABEN).enumerate() {
+        acumulado.extend_from_slice(frase);
+        let segundos = acumulado.len() as f64 / 16_000.0;
+
+        let empezo = std::time::Instant::now();
+        whisper.transcribe(&acumulado, Some("es")).expect("transcribir");
+        let ms = empezo.elapsed().as_millis();
+
+        println!(
+            "{:<28} {segundos:>10.1} {ms:>10} {:>12.2}",
+            format!("{} frase(s) seguidas", indice + 1),
+            ms as f64 / (segundos * 1000.0)
+        );
+        filas.push((segundos, ms));
+    }
+
+    // El control: las mismas cinco, una a una.
+    let empezo = std::time::Instant::now();
+    for frase in muestras.iter().take(CABEN) {
+        whisper.transcribe(frase, Some("es")).expect("transcribir");
+    }
+    let troceado_ms = empezo.elapsed().as_millis();
+    let (total_s, entero_ms) = *filas.last().expect("hay filas");
+
+    println!(
+        "{:<28} {total_s:>10.1} {troceado_ms:>10} {:>12.2}",
+        "CONTROL: las 5 por separado",
+        troceado_ms as f64 / (total_s * 1000.0)
+    );
+
+    let (primera_s, primera_ms) = filas[0];
+    println!(
+        "\nde {primera_s:.1} s a {total_s:.1} s el audio se multiplica por {:.1} y el coste \
+         por {:.1}",
+        total_s / primera_s,
+        entero_ms as f64 / primera_ms as f64
+    );
+    println!(
+        "trocear el mismo audio en 5: {troceado_ms} ms contra {entero_ms} ms de una pasada \
+         ({:.1}x)",
+        troceado_ms as f64 / entero_ms as f64
+    );
+
+    // Sin asercion sobre cual gana: eso es la conclusion que este banco existe para sacar.
+    // Lo unico que se exige es que el reloj este midiendo algo.
+    assert!(entero_ms > 0, "la pasada entera costo cero: el reloj no mide");
+}

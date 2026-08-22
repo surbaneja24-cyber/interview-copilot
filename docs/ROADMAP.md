@@ -175,7 +175,13 @@ compilar nada de C++— y whisper.cpp el último, que es el que exige compilar c
 - [x] Loopback del sistema (WASAPI) e indicador MIC / SYSTEM AUDIO / BOTH
 - [x] VAD con detección de fin de turno (Silero por ONNX Runtime)
 - [x] `LocalWhisperProvider` con whisper.cpp, descarga de modelos gestionada por la app
-- [ ] Transcripción incremental sobre ventanas solapadas (hoy es por turnos completos)
+- [~] ~~Transcripción incremental sobre ventanas solapadas~~ — **descartada el 2026-08-22 con
+      medición** (`ARCHITECTURE.md` §4.7). Transcribir cuesta lo mismo dure lo que dure el
+      turno: el audio se multiplica por 5 y el coste por 1,6, porque whisper rellena su
+      ventana a 30 s siempre. Trocear el mismo audio en cinco pasadas cuesta **3 veces más**
+      que una sola, así que la mejora no repartiría el coste, lo multiplicaría. Sigue
+      pendiente **trocear turnos de más de 30 s**, que es otra cosa: ahí el problema es que no
+      caben, no la latencia
 - [x] Medición de latencia por etapa: cada turno enseña su audio y lo que tardó whisper
 - [x] **Calibrado el colchón de arranque** (2026-08-22, `ARCHITECTURE.md` §4.5). `audio/benchmark.rs`
       compara dónde empieza la señal por energía con dónde abre turno el VAD: hacen falta

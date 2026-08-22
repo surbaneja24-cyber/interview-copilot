@@ -675,6 +675,74 @@ pregunta, que es la fria.
   micrófono que tarda un segundo en arrancar es un problema del equipo del usuario, y sin
   ensenarlo se diagnostica como un fallo de la aplicacion.
 
+## 4.7 Transcribir cuesta lo mismo dure lo que dure, y eso tumba la mejora que estaba planeada (2026-08-22)
+
+Queja de campo, no de banco: *"tarda bastante en transcribir"*. La Fase 4 tenia pendiente
+justo para esto la **transcripcion incremental sobre ventanas solapadas**, apuntada desde §4
+como una de las cuatro optimizaciones del diseno. Antes de construirla habia que saber **de
+que depende** el rato, porque las dos posibilidades llevan a soluciones opuestas.
+
+| Audio | Duracion | Coste | x tiempo real |
+|---|---|---|---|
+| 1 frase | 5,3 s | 2426 ms | 0,46 |
+| 2 frases | 10,2 s | 2558 ms | 0,25 |
+| 3 frases | 15,8 s | 2841 ms | 0,18 |
+| 4 frases | 21,5 s | 3591 ms | 0,17 |
+| 5 frases | 26,4 s | 3824 ms | 0,15 |
+| **CONTROL: las 5 por separado** | 26,4 s | **11 438 ms** | 0,43 |
+
+**El audio se multiplica por cinco y el coste por 1,6.** whisper rellena su entrada hasta 30 s
+de mel siempre, asi que lo que se paga es la ventana, no la voz. El coste no es una tasa: es
+un **suelo de 2,4 a 3,8 s por turno**, casi plano.
+
+**Y el control lo convierte en una decision.** Trocear ese mismo audio en cinco pasadas cuesta
+**3 veces mas** que una sola: 11,4 s contra 3,8. La transcripcion incremental, tal y como esta
+escrita en el roadmap, no repartiria el coste — lo multiplicaria, y encima para recortar una
+espera que ya esta dominada por un suelo fijo. **Queda descartada en esta maquina y con este
+modelo**, y el sitio donde estaba apuntada como mejora pasa a decirlo.
+
+De paso corrige un numero que se venia arrastrando. §4.3 y §4.4 dan "0,37-0,45x tiempo real",
+y es cierto — sobre frases de cinco segundos. Como **tasa** es enganoso: predice 12 s para un
+turno de 30 y la medicion da 3,8. La forma util de decirlo es "entre 2,4 y 3,8 s por turno,
+casi independientemente de lo que dure".
+
+El tope de 30 s tampoco es teorico: la sexta frase del corpus no cabe y el propio proveedor la
+rechaza, que es como aparecio en esta tabla.
+
+### Donde esta de verdad la espera del modo diapositiva
+
+Sumando lo que hay entre dejar de hablar y que la respuesta se guarde:
+
+| Etapa | Cuanto |
+|---|---|
+| Cierre de turno del VAD | 0,7 s |
+| whisper | 2,4 - 3,8 s |
+| Sondeo de la UI | hasta 0,4 s |
+| **Cuenta atras antes de guardar** | **4 s** |
+
+**La pieza mas grande no era el modelo, era la cuenta atras** — y estaba puesta sobre una
+estimacion. El comentario que la justificaba decia "lo que tarda whisper (~2 s aqui)" y
+buscaba un total de "unos seis segundos callado". Con 3 s reales de whisper el total eran
+ocho, no seis.
+
+Asi que la cuenta baja a **2 s**, que es lo que devuelve el total a los ~6,1 s que la
+constante siempre quiso valer. No es un numero mas corto porque si: es el mismo calculo con
+la medicion que faltaba cuando se escribio.
+
+Bajarla solo es seguro por un segundo cambio, y este si es un arreglo: **volver a hablar
+cancela la cuenta en cuanto el VAD oye voz**, sin esperar al texto. Antes solo la cancelaba el
+texto nuevo, y el texto tarda tres segundos y medio: quien retomaba la frase despues de pensar
+se encontraba con que la pantalla ya habia guardado y pasado de pregunta. Ese fallo ya existia
+con los cuatro segundos; acortar la cuenta sin arreglarlo lo habria hecho frecuente.
+
+### Y lo que se veia y donde
+
+El coste por turno se medía desde el 2026-08-19 y solo se enseñaba en Ajustes → Audio, que es
+justo donde no esta quien espera. Igual que el contador de turnos descartados de §4.5, que se
+estreno el 22-08 en la pantalla equivocada y por eso el primer informe de campo sobre el dijo
+"no aparecio ninguno" sin que se pudiera saber si es que no habia. Los dos estan ahora en el
+modo diapositiva. **Un numero que solo se ve donde no se necesita es un numero que no existe.**
+
 ## 5. La regla de no inventar experiencia (§6)
 
 Es un requisito de producto, así que se implementa como control explícito y no como una frase en el prompt. Lo que sigue documenta **un intento fallido y la solución que lo sustituye**, porque el intento fallido es justo el que la intuición vuelve a sugerir.

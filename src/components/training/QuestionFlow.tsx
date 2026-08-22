@@ -16,12 +16,22 @@ interface Props {
  * Segundos de silencio, ya con el texto en pantalla, antes de pasar a la siguiente.
  *
  * No se avanza al cerrarse el turno del VAD: ese cierre son 700 ms de silencio, que
- * significan "he terminado la frase" y no "he terminado la respuesta". Sumando el cierre
- * del turno, lo que tarda whisper (~2 s aquí) y esta cuenta, hacen falta unos seis segundos
- * callado para que avance. Eso ya es una intención, no una pausa para pensar. Y cualquier
- * cosa que hagas —seguir hablando, escribir, tocar un botón— la cancela.
+ * significan "he terminado la frase" y no "he terminado la respuesta". Lo que se busca es
+ * que hagan falta **unos seis segundos callado** para que avance, porque eso ya es una
+ * intención y no una pausa para pensar.
+ *
+ * Eran cuatro segundos, y esa cuenta se apoyaba en una estimación: "lo que tarda whisper
+ * (~2 s aquí)". Medido el 2026-08-22 (§4.7), tarda entre 2,4 y 3,8 s, y encima casi
+ * independientemente de lo que dure el turno. Con el cierre del VAD y el sondeo, el total
+ * real eran unos ocho segundos, no seis. Bajar a dos devuelve la cuenta a lo que siempre
+ * quiso ser:
+ *
+ *     0,7 s de cierre del VAD + ~3,0 s de whisper + 0,4 s de sondeo + 2 s = ~6,1 s
+ *
+ * El número no se ha elegido más corto porque sí: se ha recalculado con la medición que
+ * faltaba cuando se puso.
  */
-const SEGUNDOS_PARA_AVANZAR = 4;
+const SEGUNDOS_PARA_AVANZAR = 2;
 
 /**
  * Por qué se ha parado, en una frase.
@@ -183,6 +193,19 @@ export function QuestionFlow({ questions, onAnswer, onExit, showHints = true }: 
     irA(index + 1);
   }, [question, index, irA]);
 
+  /**
+   * Volver a hablar para la cuenta **en cuanto se oye**, sin esperar al texto.
+   *
+   * Antes solo la cancelaba el texto nuevo, y el texto tarda unos tres segundos y medio en
+   * llegar: quien retomaba la frase después de pensar se encontraba con que la pantalla ya
+   * había guardado y pasado de pregunta. Es lo que hacía imposible acortar la cuenta, y es
+   * lo que la arregla.
+   */
+  useEffect(() => {
+    if (!dictado.speaking) return;
+    setFase((actual) => (actual.tipo === 'avanzando' ? { tipo: 'respondiendo' } : actual));
+  }, [dictado.speaking]);
+
   // La cuenta atrás. Se rehace entera cada segundo para que la pantalla la enseñe.
   useEffect(() => {
     if (fase.tipo !== 'avanzando') return undefined;
@@ -280,8 +303,26 @@ export function QuestionFlow({ questions, onAnswer, onExit, showHints = true }: 
 
       <div className="vad">
         <span className={dictating ? 'vad__speaking' : undefined}>
-          {dictating ? 'escuchando' : 'micrófono parado'}
+          {dictado.pending > 0
+            ? `transcribiendo${dictado.pending > 1 ? ` (${String(dictado.pending)} en cola)` : '…'}`
+            : dictating
+              ? 'escuchando'
+              : 'micrófono parado'}
         </span>
+        {/* Lo que costó el último turno, a la vista. Ya se medía y solo se veía en Ajustes,
+            que es donde no está quien espera. */}
+        {dictado.lastTurn !== null && (
+          <span>
+            último turno {(dictado.lastTurn.audioMs / 1000).toFixed(1)} s →{' '}
+            {(dictado.lastTurn.tookMs / 1000).toFixed(1)} s en transcribir
+          </span>
+        )}
+        {dictado.discarded > 0 && (
+          <span>
+            {dictado.discarded} turno{dictado.discarded === 1 ? '' : 's'} descartado
+            {dictado.discarded === 1 ? '' : 's'} por cortos
+          </span>
+        )}
         <span>{dictado.status}</span>
       </div>
 

@@ -193,6 +193,54 @@ const FRAMES_TO_START: usize = 2;
 /// aire a mitad de frase y cerrar ahi cortaria al entrevistador mientras habla.
 const SILENCE_MS_TO_END: usize = 700;
 
+/// Voz minima para que un turno cuente. Por debajo se tira y se cuenta aparte.
+///
+/// Existe por el turno espurio del 2026-08-21: al abrir el microfono, un transitorio de
+/// **64 ms** —exactamente las dos ventanas que exige `FRAMES_TO_START`— abrio turno, y
+/// whisper alucino `[Música]` sobre el. Ese texto disparo la cuenta atras del modo
+/// diapositiva y se guardo como respuesta del candidato sin que nadie hubiera hablado.
+///
+/// **El numero sale de medir los dos lados, no de elegirlo** (`audio::benchmark`,
+/// `ARCHITECTURE.md` §4.5):
+///
+/// - suelo de lo que hay que conservar: el turno legitimo mas corto, un "No.", dura
+///   **256 ms** de voz. Tirar tambien los "si" seria cambiar un fallo por otro;
+/// - techo de lo que hay que tirar: el transitorio observado, **64 ms**.
+///
+/// 128 ms es la media **geometrica** de los dos: el doble del transitorio y la mitad del
+/// turno mas corto, o sea igual de lejos de ambos medido en veces y no en milisegundos. Es
+/// lo que corresponde cuando los dos extremos son inciertos —del transitorio hay una sola
+/// observacion y el "No." lo dijo un sintetizador—, porque maximiza el margen por el lado
+/// que se equivoque. Y cae justo en cuatro ventanas, que es obligatorio: la duracion se
+/// cuenta en ventanas de 32 ms y un umbral entre dos de ellas seria en realidad el de al
+/// lado, disfrazado.
+const MIN_TURN_MS: usize = 4 * FRAME_MS;
+
+/// El transitorio observado el 2026-08-21, y el turno legitimo mas corto medido: los dos
+/// extremos entre los que tiene que caer el umbral.
+const TRANSIENT_MS: usize = 64;
+const SHORTEST_REAL_TURN_MS: usize = 256;
+
+/// Y que caiga ahi se comprueba al compilar, no al ejecutar.
+///
+/// Es una condicion entre constantes, asi que un test seria mirar en tiempo de ejecucion
+/// algo que ya se sabe antes: mover `MIN_TURN_MS` fuera del hueco medido tiene que romper
+/// la compilacion, no un test que alguien podria no llegar a correr.
+const _: () = {
+    assert!(
+        MIN_TURN_MS > TRANSIENT_MS,
+        "el umbral no tira el transitorio de apertura medido"
+    );
+    assert!(
+        MIN_TURN_MS < SHORTEST_REAL_TURN_MS,
+        "el umbral se come el turno legitimo mas corto que se ha medido"
+    );
+    assert!(
+        MIN_TURN_MS % FRAME_MS == 0,
+        "un umbral que no cae en una ventana entera es en realidad el de al lado"
+    );
+};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Turn {
@@ -211,6 +259,13 @@ pub enum Event {
     /// Ha terminado de hablar: es el disparador de la respuesta (§10). Lleva cuanto duro
     /// el turno, en milisegundos, sin contar el silencio final.
     TurnEnded { speech_ms: usize },
+    /// Se abrio y cerro un turno demasiado corto para ser nada: se tira sin transcribir.
+    ///
+    /// Es un evento propio y no un `Nothing` porque **lo que se descarta se cuenta**, igual
+    /// que las muestras que se pierden cuando la cola se llena. Un turno tirado en silencio
+    /// es indistinguible de un turno que nunca ocurrio, y son cosas distintas: muchos
+    /// descartes seguidos significan que algo esta metiendo ruido en el arranque.
+    TurnDiscarded { speech_ms: usize },
 }
 
 /// Decide cuando empieza y cuando acaba un turno a partir de las probabilidades.
@@ -279,7 +334,14 @@ impl TurnDetector {
                     let speech_ms = self.turn_frames * FRAME_MS;
                     self.turn = Turn::Silent;
                     self.turn_frames = 0;
-                    return Event::TurnEnded { speech_ms };
+                    // Justo en el umbral se conserva. Ante la duda, la respuesta corta del
+                    // candidato pesa mas que un transitorio de mas: tirar voz de verdad es
+                    // un fallo que no se ve, y transcribir un chasquido si.
+                    return if speech_ms >= MIN_TURN_MS {
+                        Event::TurnEnded { speech_ms }
+                    } else {
+                        Event::TurnDiscarded { speech_ms }
+                    };
                 }
 
                 Event::Nothing
@@ -490,11 +552,57 @@ mod tests {
 
         feed(&mut detector, 0.9, 10);
         let primero = feed(&mut detector, 0.1, silencio);
-        feed(&mut detector, 0.9, 4);
+        // Seis ventanas y no cuatro: cuatro son exactamente `MIN_TURN_MS`, y un test que
+        // mide otra cosa no tiene por que estar apoyado en el umbral de al lado.
+        feed(&mut detector, 0.9, 6);
         let segundo = feed(&mut detector, 0.1, silencio);
 
         assert!(matches!(primero.as_slice(), [Event::TurnEnded { speech_ms }] if *speech_ms == 10 * FRAME_MS));
-        assert!(matches!(segundo.as_slice(), [Event::TurnEnded { speech_ms }] if *speech_ms == 4 * FRAME_MS));
+        assert!(matches!(segundo.as_slice(), [Event::TurnEnded { speech_ms }] if *speech_ms == 6 * FRAME_MS));
+    }
+
+    /// El caso que motiva el umbral: el transitorio de 64 ms del 2026-08-21, que son
+    /// exactamente las dos ventanas que abren un turno. Tiene que morir aqui y no llegar a
+    /// whisper, que sobre el alucino `[Música]` y lo guardo como respuesta del candidato.
+    #[test]
+    fn el_transitorio_de_dos_ventanas_no_llega_a_transcribirse() {
+        let mut detector = TurnDetector::new();
+        feed(&mut detector, 0.9, 2);
+        let eventos = feed(&mut detector, 0.1, frames_for_ms(SILENCE_MS_TO_END));
+
+        match eventos.as_slice() {
+            [Event::TurnDiscarded { speech_ms }] => assert_eq!(*speech_ms, 64),
+            other => panic!("el transitorio de 64 ms salio como {other:?}"),
+        }
+        assert_eq!(detector.turn(), Turn::Silent, "el turno tiene que cerrarse igual");
+    }
+
+    /// La otra mitad, y la que hace que el umbral no sea gratis: un "No." dura 256 ms
+    /// medidos y no puede tirarse. Tirar respuestas cortas seria cambiar un fallo por otro.
+    #[test]
+    fn una_respuesta_corta_de_verdad_no_se_tira() {
+        let mut detector = TurnDetector::new();
+        feed(&mut detector, 0.9, frames_for_ms(256));
+        let eventos = feed(&mut detector, 0.1, frames_for_ms(SILENCE_MS_TO_END));
+
+        assert!(
+            matches!(eventos.as_slice(), [Event::TurnEnded { .. }]),
+            "un turno de 256 ms —el mas corto medido, un \"No.\"— salio como {eventos:?}"
+        );
+    }
+
+    /// Justo en el umbral se conserva. Es la decision que hay escrita en el codigo, y sin
+    /// test se cambiaria sola en el primer refactor.
+    #[test]
+    fn justo_en_el_umbral_el_turno_se_conserva() {
+        let mut detector = TurnDetector::new();
+        feed(&mut detector, 0.9, MIN_TURN_MS / FRAME_MS);
+        let eventos = feed(&mut detector, 0.1, frames_for_ms(SILENCE_MS_TO_END));
+
+        match eventos.as_slice() {
+            [Event::TurnEnded { speech_ms }] => assert_eq!(*speech_ms, MIN_TURN_MS),
+            other => panic!("un turno de exactamente {MIN_TURN_MS} ms salio como {other:?}"),
+        }
     }
 
     #[test]
@@ -634,6 +742,9 @@ pub struct VadState {
     /// Ventanas que se perdieron porque la cola se lleno. Distinto de cero significa que
     /// el VAD no vio todo el audio, y eso hay que saberlo antes de fiarse de un turno.
     pub dropped: usize,
+    /// Turnos tirados por durar menos de `MIN_TURN_MS`. Uno al abrir el microfono es el
+    /// transitorio y esta bien; muchos seguidos significan ruido en la entrada.
+    pub discarded: usize,
     /// Diagnostico: la muestra mas alta que ha visto el VAD, para distinguir "no hay voz"
     /// de "no esta llegando el audio".
     pub peak_in: f32,
@@ -648,6 +759,7 @@ impl VadState {
             last_turn_ms: None,
             turns: 0,
             dropped: 0,
+            discarded: 0,
             peak_in: 0.0,
         }
     }
@@ -730,6 +842,13 @@ impl LiveVad {
                             turn_audio.extend_from_slice(&frame);
                             collecting = true;
                         }
+                        Event::TurnDiscarded { speech_ms } => {
+                            collecting = false;
+                            turn_audio.clear();
+                            log::debug!(
+                                "turno de {speech_ms} ms descartado: por debajo de                                  {MIN_TURN_MS} ms no se transcribe"
+                            );
+                        }
                         Event::TurnEnded { speech_ms } => {
                             collecting = false;
                             if let Some(sink) = turns.as_ref() {
@@ -770,9 +889,13 @@ impl LiveVad {
                         state.max_probability = state.max_probability.max(tracker.probability());
                         state.peak_in = state.peak_in.max(peak);
                         state.turn = tracker.turn();
-                        if let Event::TurnEnded { speech_ms } = event {
-                            state.last_turn_ms = Some(speech_ms);
-                            state.turns += 1;
+                        match event {
+                            Event::TurnEnded { speech_ms } => {
+                                state.last_turn_ms = Some(speech_ms);
+                                state.turns += 1;
+                            }
+                            Event::TurnDiscarded { .. } => state.discarded += 1,
+                            _ => {}
                         }
                     }
                 }

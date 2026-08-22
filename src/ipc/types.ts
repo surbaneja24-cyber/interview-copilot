@@ -234,6 +234,13 @@ export interface VadState {
   readonly turns: number;
   /** Muestras que el VAD no llegó a ver porque la cola se llenó. */
   readonly dropped: number;
+  /**
+   * Turnos tirados por demasiado cortos para ser nada.
+   *
+   * Uno al abrir el micrófono es el transitorio del dispositivo y está bien; muchos
+   * seguidos significan que algo mete ruido en la entrada.
+   */
+  readonly discarded: number;
   /** La muestra más alta que ha visto el detector: distingue "no hay voz" de "no llega audio". */
   readonly peakIn: number;
 }

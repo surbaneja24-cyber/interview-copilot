@@ -540,6 +540,29 @@ respuesta corta legitima, porque tirar tambien los "si" seria cambiar un fallo p
 Cabe de sobra una duracion minima de turno que separe las dos cosas sin tocar ni el umbral ni
 la histeresis, que es la parte del VAD que si esta calibrada contra algo.
 
+**Puesta el 2026-08-22: `MIN_TURN_MS` son 128 ms**, y el numero no se elige, sale de los dos
+extremos. Es la media **geometrica** de 64 y 256: el doble del transitorio y la mitad del
+turno mas corto, o sea igual de lejos de ambos medido en veces y no en milisegundos. Eso es
+lo que corresponde cuando los dos extremos son inciertos —del transitorio hay una sola
+observacion y el "No." lo dijo un sintetizador—, porque maximiza el margen por el lado por el
+que se acabe fallando. Y cae en cuatro ventanas exactas, que no es coincidencia agradable
+sino requisito: la duracion se cuenta en ventanas de 32 ms, asi que un umbral entre dos de
+ellas seria en realidad el de al lado con otro nombre.
+
+Justo en el umbral el turno **se conserva**. Ante la duda pesa mas la respuesta corta del
+candidato: transcribir un chasquido de mas se ve en pantalla, y tirar un "si" de verdad no.
+
+Un turno por debajo del umbral no desaparece, **se cuenta**: `TurnDiscarded` es un evento
+propio y `VadState::discarded` lo lleva a la pantalla. Es la misma regla que las muestras que
+se pierden cuando la cola se llena — un turno tirado en silencio es indistinguible de un
+turno que nunca ocurrio, y uno al abrir el microfono es el transitorio y esta bien, mientras
+que muchos seguidos significan que algo mete ruido en la entrada.
+
+Que el umbral caiga entre los dos numeros medidos **se comprueba al compilar**, no en un
+test: es una condicion entre constantes, y moverlo fuera del hueco tiene que romper la
+compilacion en vez de un test que alguien podria no llegar a correr. Comprobado bajandolo a
+64 ms a proposito: la compilacion falla con el motivo escrito.
+
 ### Lo que estos bancos no pueden ver
 
 - **El transitorio de apertura.** Lo produce el dispositivo al abrirse, no un fichero, asi

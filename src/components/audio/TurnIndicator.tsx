@@ -25,6 +25,12 @@ export function TurnIndicator({ vad }: Props) {
       <span>máx {(vad.maxProbability * 100).toFixed(0)}%</span>
       <span>{vad.turns} turnos</span>
       {vad.lastTurnMs !== null && <span>último {(vad.lastTurnMs / 1000).toFixed(1)} s</span>}
+      {vad.discarded > 0 && (
+        <span className="muted">
+          {vad.discarded} turno{vad.discarded === 1 ? '' : 's'} descartado
+          {vad.discarded === 1 ? '' : 's'} por cortos
+        </span>
+      )}
       {vad.dropped > 0 && (
         <span className="error">
           {vad.dropped.toLocaleString('es-ES')} muestras perdidas: el detector no vio todo el

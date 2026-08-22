@@ -317,10 +317,12 @@ se borraron el 2026-08-22, comprobando que los trozos del CV siguen a la misma d
 - [x] **(a) Se comía 400-700 ms del principio.** No era el colchón (§4.5) sino que el
       micrófono todavía no capturaba, y el grueso de esa espera era el modelo del VAD
       cargándose en cada apertura (§4.6). Arreglado
-- [ ] **(b) Un turno espurio de 64 ms al abrir el micrófono** produce texto alucinado
-      (`[Música]`) que dispara la cuenta atrás y se guarda sin que nadie haya hablado.
-      Medido el suelo: el turno legítimo más corto —"No."— dura **256 ms**, así que hay
-      192 ms de margen para una duración mínima de turno. Falta ponerla
+- [x] **(b) Un turno espurio de 64 ms al abrir el micrófono** producía texto alucinado
+      (`[Música]`) que disparaba la cuenta atrás y se guardaba sin que nadie hubiera hablado.
+      Arreglado con `MIN_TURN_MS` = **128 ms**, la media geométrica entre el transitorio
+      medido (64) y el turno legítimo más corto medido (256, un "No."). Lo que se tira se
+      cuenta —`TurnDiscarded` y `VadState::discarded`, a la vista en la UI— y que el umbral
+      caiga en ese hueco se comprueba al compilar
 - [ ] **(c) Frases enteras mal reconocidas** ("¡Aguien es bien!"). Es el único de los tres
       **sin causa**: `base` da 0,089 de WER sobre voz limpia (§4.4) y la distancia con lo
       real no la explica el modelo. Bloqueado hasta medir el nivel del micrófono hablando

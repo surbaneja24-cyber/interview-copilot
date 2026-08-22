@@ -177,6 +177,19 @@ compilar nada de C++— y whisper.cpp el último, que es el que exige compilar c
 - [x] `LocalWhisperProvider` con whisper.cpp, descarga de modelos gestionada por la app
 - [ ] Transcripción incremental sobre ventanas solapadas (hoy es por turnos completos)
 - [x] Medición de latencia por etapa: cada turno enseña su audio y lo que tardó whisper
+- [x] **Calibrado el colchón de arranque** (2026-08-22, `ARCHITECTURE.md` §4.5). `audio/benchmark.rs`
+      compara dónde empieza la señal por energía con dónde abre turno el VAD: hacen falta
+      entre **8 y 54 ms** y `PREROLL_FRAMES` da 256, así que **sobra por cinco**, y no cambia
+      bajando la ganancia hasta la décima parte. La sospecha de que estaba corto queda
+      descartada
+- [x] **Medida la ventana muerta del arranque** (2026-08-22, §4.6). Desde que se pide la
+      captura hasta la primera muestra: 72 ms en caliente, 202 la primera apertura del
+      proceso. `openedMs` y `firstSampleMs` viajan en `CaptureStatus`
+- [x] **El modelo del VAD se carga una vez por proceso** y no en cada `Recorder::start`, que
+      costaba 111 ms en caliente y ~250 en frío por apertura — una por pregunta en el modo
+      diapositiva. Se comparte la sesión de ONNX; el estado recurrente no
+- [ ] Enseñar `firstSampleMs` en Ajustes → Micrófono. El número ya está; sin verlo, un
+      micrófono lento se diagnostica como un fallo de la aplicación
 
 **Hito conseguido.** Hablo y el texto aparece: verificado sin nadie delante, con el
 sintetizador de voz de Windows hablando por los altavoces, el loopback capturando, el VAD
@@ -295,6 +308,26 @@ ese material con sus palabras.
       decisiones sobre cuál toca ahora ni veinte clics para abrir el micrófono
 - [x] Cada respuesta se indexa con su pregunta delante, medido contra el CV real
 - [ ] Preguntas generadas a partir de la oferta concreta, además del banco fijo
+
+**Los tres fallos que envenenaron el corpus el 2026-08-21.** Cinco respuestas dictadas
+seguidas se guardaron e indexaron solas, las cinco inservibles. Las ocho que había en la base
+se borraron el 2026-08-22, comprobando que los trozos del CV siguen a la misma distancia:
+"ha borrado bien" y "ha roto el índice" se leen igual sin ese control.
+
+- [x] **(a) Se comía 400-700 ms del principio.** No era el colchón (§4.5) sino que el
+      micrófono todavía no capturaba, y el grueso de esa espera era el modelo del VAD
+      cargándose en cada apertura (§4.6). Arreglado
+- [ ] **(b) Un turno espurio de 64 ms al abrir el micrófono** produce texto alucinado
+      (`[Música]`) que dispara la cuenta atrás y se guarda sin que nadie haya hablado.
+      Medido el suelo: el turno legítimo más corto —"No."— dura **256 ms**, así que hay
+      192 ms de margen para una duración mínima de turno. Falta ponerla
+- [ ] **(c) Frases enteras mal reconocidas** ("¡Aguien es bien!"). Es el único de los tres
+      **sin causa**: `base` da 0,089 de WER sobre voz limpia (§4.4) y la distancia con lo
+      real no la explica el modelo. Bloqueado hasta medir el nivel del micrófono hablando
+- [ ] **El modo diapositiva no debe guardar sin confirmar** una respuesta corta o
+      sospechosa. Hoy cualquier texto en la caja dispara la cuenta de 4 s y guarda
+- [ ] Abrir el micrófono mientras se dibuja la pregunta anterior. Aunque la carga del modelo
+      ya no esté, quedan los ~72 ms del dispositivo y no hay por qué regalarlos
 - [x] **Medido de dónde salen los cinco fragmentos que ve el modelo** (2026-08-20). Sobre el
       CV real más una oferta del puesto, y las veinte preguntas del banco: **19 de 20 traen
       material de la empresa en el top 5**, 36 de los 100 sitios, y **la oferta es el primer

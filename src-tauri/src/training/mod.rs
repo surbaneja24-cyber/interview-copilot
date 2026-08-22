@@ -19,6 +19,8 @@
 //! de la oferta llega despues: un banco fijo funciona sin modelo, sin red y sin latencia, y
 //! es lo que permite entrenar en un portatil que no mueve un 3B.
 
+pub mod review;
+
 use serde::Serialize;
 
 /// El tipo de pregunta, de la taxonomia de §7. Se guarda con la respuesta para poder

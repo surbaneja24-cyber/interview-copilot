@@ -888,6 +888,74 @@ Dónde se aplica hoy, y por qué no en todas partes:
 Lo que **no** mide este test, y hay que decirlo: el peso de las respuestas entrenadas frente
 al CV. Eso sigue con el único dato de §5.1 —0,8746 contra 0,7960— y una sola pregunta.
 
+## 5.3 Lo que se guarda solo hay que verlo antes de que se guarde (2026-08-22)
+
+El modo diapositiva quito friccion y de paso quito la ultima oportunidad de mirar lo que se
+estaba archivando: cualquier texto en la caja disparaba la cuenta de 4 s y se guardaba. El
+2026-08-21 se archivaron asi ocho respuestas inservibles, y no por descuido — la pantalla las
+estaba ensenando. **Verlo pasar no es verlo.**
+
+Importa mas de lo que parece porque una respuesta entrenada le gana la recuperacion al CV por
+nueve centesimas (§5.1): lo que entra mal aqui se queda arriba del todo en todas las
+entrevistas siguientes.
+
+**Lo que esto no es.** No puntua respuestas ni decide si una respuesta es buena. Eso necesita
+un modelo capaz, que en esta maquina no hay, y ponerle un porcentaje seria el error que §12
+ya tiene anotado. Lo unico que decide es **si la respuesta se guarda sola o hay que mirarla**,
+y la asimetria manda: un falso positivo cuesta un clic, un falso negativo cuesta el corpus.
+
+Tampoco es "confirmar todo". Confirmar veinte respuestas seria devolver las veinte decisiones
+que este modo existe para quitar, y a los tres avisos nadie los lee. Una respuesta normal se
+sigue guardando sola.
+
+### Las cuatro reglas, y de que corpus salen
+
+De comparar dos corpus reales, no de imaginar como falla una transcripcion: **las ocho
+respuestas envenenadas tal cual se guardaron**, que estan en el test y se quedan ahi para
+siempre, contra **las seis frases del corpus de referencia** (§4.4), que es como suena una
+respuesta correcta del mismo dominio.
+
+| Regla | De donde sale |
+|---|---|
+| Marca de no-habla | Se buscan **los corchetes**, no una lista de palabras: la lista se queda corta el dia que el modelo escriba `[Ruido]` en vez de `[Música]`, y nadie dicta corchetes. `♪` aparte, que whisper la usa suelta |
+| Menos de **10 palabras** | La respuesta correcta mas corta del corpus tiene 13; la envenenada mas larga de las cazables por longitud, 8. Diez es la media geometrica, igual que `MIN_TURN_MS` y por lo mismo |
+| Empieza a media frase | Minuscula inicial **o** conjuncion. Solo la minuscula no bastaba: "Y de ultimo lejos se voy…" lleva mayuscula porque whisper la pone al empezar aunque lo que oyo empezara a la mitad |
+| Guiones de dialogo | whisper los mete cuando cree oir a dos personas, y una respuesta dictada es una sola |
+
+### Lo medido
+
+**Siete de las ocho envenenadas se cazan. Ninguna de las seis buenas.**
+
+La segunda cifra es el control y es la que decide si esto vale: una regla que marca
+respuestas validas no es una regla, es ruido, y un aviso que salta siempre deja de existir
+aunque siga en el codigo.
+
+La que se escapa esta escrita aparte en el test, con nombre propio: *"Ah, y me voy a estar a
+ver de ahi, un boque este video."* Tiene largo de respuesta, empieza en mayuscula y no lleva
+ninguna marca. Para verla hace falta entender lo que dice, y eso es otro problema. Ponerla
+como limite explicito en vez de como fila que falta es lo que evita creerse que el filtro
+caza todo.
+
+### Lo que el umbral de palabras todavia no sabe
+
+En el corpus de referencia **no hay ni una respuesta legitimamente corta**, porque no hay
+preguntas de `Logistics`: "¿cual es tu disponibilidad?" se contesta de verdad en seis
+palabras. Cuando las haya, el suelo hay que volver a medirlo. Mientras tanto el error cae del
+lado barato — esa respuesta se marca y se guarda con un clic — y queda dicho aqui en vez de
+descubrirse usando la aplicacion.
+
+### Donde se aplica
+
+Por el mismo camino pasan la cuenta atras **y el boton de guardar**. El boton tambien, porque
+una respuesta envenenada guardada por un clic impaciente envenena igual, y la confirmacion es
+una sola. Si la revision falla por lo que sea, tampoco se guarda: seguir a ciegas porque la
+comprobacion no contesto seria quitar justo la red que se acaba de poner.
+
+`training/review.rs` es una funcion pura detras de un comando, no logica de pantalla. Va en
+Rust y no en el frontend por dos motivos: aqui hay tests y en el frontend no (§Politica de
+tests), y la Fase 7 pide lo mismo para Practica — que pregunta por cada respuesta si se
+guarda como material — asi que reescribirlo alli seria tener dos filtros que se separan.
+
 ## 6. Protección de captura (§26-33)
 
 Interfaz `CaptureProtection` con `enable` / `disable` / `is_supported` / `get_status`, y tres modos: `OFF`, `EXCLUDE_FROM_CAPTURE`, `MONITOR_ONLY`.

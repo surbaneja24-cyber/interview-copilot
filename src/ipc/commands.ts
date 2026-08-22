@@ -1,6 +1,7 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
 import type {
   AnswerEvent,
+  AnswerReview,
   AnswerStyle,
   CaptureSnapshot,
   CaptureStatus,
@@ -47,6 +48,16 @@ export function listDocuments(projectId: number): Promise<readonly DocumentInfo[
 }
 
 /** El material del candidato: lo que no cuelga de ninguna entrevista. */
+/**
+ * Mira una respuesta dictada antes de guardarla.
+ *
+ * Se pregunta una vez por respuesta, cuando la cuenta atrás termina o cuando el usuario da
+ * a guardar; no en cada tecla.
+ */
+export function reviewAnswer(answer: string): Promise<AnswerReview> {
+  return invoke<AnswerReview>('review_answer', { answer });
+}
+
 export function candidateDocuments(kind?: DocumentKind): Promise<readonly DocumentInfo[]> {
   return invoke<DocumentInfo[]>('candidate_documents', { kind: kind ?? null });
 }

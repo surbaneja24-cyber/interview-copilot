@@ -245,6 +245,25 @@ export interface VadState {
   readonly peakIn: number;
 }
 
+/**
+ * Por qué una respuesta dictada no se guarda sola.
+ *
+ * Las cuatro salen de comparar las ocho respuestas que envenenaron el corpus el 21-08 con
+ * el corpus de respuestas correctas: cazan siete de las ocho y ninguna buena.
+ */
+export type AnswerReviewReason =
+  | { readonly kind: 'nonSpeechMarker' }
+  | { readonly kind: 'tooShort'; readonly words: number }
+  | { readonly kind: 'startsMidSentence' }
+  | { readonly kind: 'dialogueDashes' };
+
+export interface AnswerReview {
+  /** Si hay que confirmarla antes de guardar. No dice que sea mala: dice que hay que mirarla. */
+  readonly suspicious: boolean;
+  readonly reasons: readonly AnswerReviewReason[];
+  readonly words: number;
+}
+
 export interface CaptureStatus {
   readonly source: Source;
   readonly capturing: boolean;

@@ -326,8 +326,11 @@ se borraron el 2026-08-22, comprobando que los trozos del CV siguen a la misma d
 - [ ] **(c) Frases enteras mal reconocidas** ("¡Aguien es bien!"). Es el único de los tres
       **sin causa**: `base` da 0,089 de WER sobre voz limpia (§4.4) y la distancia con lo
       real no la explica el modelo. Bloqueado hasta medir el nivel del micrófono hablando
-- [ ] **El modo diapositiva no debe guardar sin confirmar** una respuesta corta o
-      sospechosa. Hoy cualquier texto en la caja dispara la cuenta de 4 s y guarda
+- [x] **El modo diapositiva ya no guarda sin confirmar** una respuesta corta o sospechosa
+      (`ARCHITECTURE.md` §5.3). Cuatro reglas sacadas de comparar las ocho envenenadas con el
+      corpus de referencia: **cazan 7 de las 8 y ninguna de las 6 buenas**, que es el control
+      que importa. Una respuesta normal se sigue guardando sola, que es para lo que existe
+      este modo. Pasan por el filtro la cuenta atrás y el botón de guardar
 - [ ] Abrir el micrófono mientras se dibuja la pregunta anterior. Aunque la carga del modelo
       ya no esté, quedan los ~72 ms del dispositivo y no hay por qué regalarlos
 - [x] **Medido de dónde salen los cinco fragmentos que ve el modelo** (2026-08-20). Sobre el

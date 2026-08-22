@@ -35,6 +35,13 @@ use storage::{Db, Document, DocumentKind, NewDocument, NewProject, Project};
 const DB_FILE: &str = "interview-copilot.db";
 const MODELS_DIR: &str = "models";
 
+/// Mira una respuesta dictada antes de guardarla, para que el modo diapositiva no archive
+/// solo lo que no lo parece. Es una funcion pura y no toca ni la base ni el disco.
+#[tauri::command]
+fn review_answer(answer: String) -> AppResult<training::review::AnswerReview> {
+    training::review::review_answer(&answer)
+}
+
 #[tauri::command]
 fn hardware_report() -> HardwareReport {
     hardware::detect()
@@ -490,6 +497,7 @@ pub fn run() {
             candidate_documents,
             training_questions,
             save_prepared_answer,
+            review_answer,
             index_pending,
             search_context,
             model_status,

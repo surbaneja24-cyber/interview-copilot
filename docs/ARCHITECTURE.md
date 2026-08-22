@@ -502,7 +502,8 @@ explicacion en el VAD, y el siguiente sitio donde mirar es **el tiempo que tarda
 dispositivo en entregar la primera muestra despues de abrirlo**: si el modo diapositiva abre
 el microfono y ensena la pregunta a la vez, lo que se habla mientras Windows abre la sesion
 de audio no es que se descarte, es que no existe. Los 400-700 ms encajan con eso mucho mejor
-que con un colchon de 256.
+que con un colchon de 256. **Medido en §4.6: son 343 ms de mediana, y 250 de ellos son
+el modelo del VAD cargandose antes de abrir el dispositivo.**
 
 ### Los tres controles, y por que hacen falta aqui mas que nunca
 
@@ -550,6 +551,70 @@ la histeresis, que es la parte del VAD que si esta calibrada contra algo.
   La fila "a la decima parte" descarta que el volumen por si solo retrase el arranque; no
   descarta que una relacion senal-ruido mala lo haga.
 - **La voz real**, igual que en §4.4. El sintetizador habla mas limpio que nadie.
+
+## 4.6 La ventana muerta del arranque: el modelo del VAD se carga en cada apertura (2026-08-22)
+
+§4.5 descarto el colchon y dejo una hipotesis: lo que se pierde del principio no se descarta,
+**no existe**, porque se habla mientras el dispositivo todavia se esta abriendo. Aqui esta
+medida, y la respuesta es mas concreta de lo que apuntaba la hipotesis.
+
+`Meter` sella dos instantes desde que se pide la captura: cuando el dispositivo dice estar
+abierto y **cuando llega la primera ventana de audio de verdad**. El segundo es el que
+cuenta; un dispositivo puede dar la sesion por abierta y tardar despues en entregar nada. Los
+dos salen en `CaptureStatus`, asi que dejan de ser un numero de banco y pasan a ser
+diagnostico: "el microfono no me oye" y "el microfono tarda medio segundo en encenderse" se
+parecen en pantalla y llevan a sitios opuestos.
+
+| Condicion | Primera muestra (mediana) | Min | Max |
+|---|---|---|---|
+| primera apertura del proceso, sin VAD | 267 ms | — | — |
+| en caliente, sondeando cada 1 ms | 92 ms | 84 | 105 |
+| en caliente, sondeando cada 50 ms | 94 ms | 89 | 117 |
+| **en caliente, con el VAD cargando** | **343 ms** | **264** | **544** |
+
+**Abrir el dispositivo cuesta unos 90 ms. Cargar Silero antes de abrirlo cuesta 250 mas.**
+`Recorder::start` construye el `VoiceTracker` —y con el lee el ONNX del disco— **antes** de
+tocar la tarjeta, a proposito: asi un modelo corrupto es un error al pulsar "Escuchar" y no un
+hilo que muere en silencio. El precio de esa decision no se habia medido nunca, y es que cada
+apertura del microfono arrastra una carga de modelo entera.
+
+En el modo diapositiva eso ocurre **una vez por pregunta**: el `useEffect` que abre el
+microfono depende del indice, asi que veinte preguntas son veinte cargas de Silero. Sumando la
+ida y vuelta por IPC y el renderizado, la ventana muerta real esta por encima del medio
+segundo, que es justo el orden de los 400-700 ms que faltaban en las respuestas guardadas.
+
+**El colchon no podia arreglarlo, y ahora se ve por que.** `PREROLL_FRAMES` guarda audio ya
+capturado; aqui no hay audio que guardar. Subirlo a un segundo no habria cambiado una palabra.
+
+### El control, y lo que descubrio antes de pasar
+
+El riesgo de este banco es cronometrar al que mira: si el instante se tomase en el bucle de
+espera, sondear cada 50 ms daria numeros hasta 50 ms mas altos que sondear cada 1 ms. La marca
+se pone **dentro** de la llamada de retorno de audio, asi que las dos columnas tienen que
+coincidir, y el test lo exige.
+
+La primera version del banco **fallo ese control**: 113 ms contra 83. No era el sondeo. Era
+que la primera apertura del proceso costaba 339 ms y caia siempre en la primera columna, con
+lo que dos efectos distintos estaban sumados en una sola cifra. Separada la apertura en frio,
+el control pasa con 5 ms de diferencia entre las dos medianas. Es el mismo tipo de hallazgo
+que el prompt con faltas de §4.4, solo que al reves: alli el control confirmo una conclusion,
+aqui la impidio.
+
+Una precaucion mas, pequena y de la misma familia: la marca de la primera muestra se pone al
+**final** de `Meter::push`, despues de contar las muestras. Al principio habia un instante en
+que el estado decia "ya llego la primera muestra" con el contador todavia a cero, y un
+diagnostico que se contradice a si mismo no sirve para diagnosticar nada.
+
+### Lo que sale de aqui
+
+- **Cargar Silero una vez y conservarlo** entre aperturas, en vez de en cada `Recorder::start`.
+  Es donde estan los 250 ms, y no cuesta ninguna constante nueva.
+- **No abrir el microfono a la vez que se ensena la pregunta.** Aunque la carga desaparezca
+  quedan los ~90 ms del dispositivo, y el modo diapositiva no tiene por que regalarlos: puede
+  abrirlo mientras se dibuja la pregunta anterior.
+- **`firstSampleMs` a la vista en Ajustes → Microfono.** El numero ya viaja en el estado; un
+  micrófono que tarda un segundo en arrancar es un problema del equipo del usuario, y sin
+  ensenarlo se diagnostica como un fallo de la aplicacion.
 
 ## 5. La regla de no inventar experiencia (§6)
 

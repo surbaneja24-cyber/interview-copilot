@@ -5,6 +5,7 @@
 //! test de regresion.
 
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::time::Instant;
 
 /// Suelo del medidor en decibelios a fondo de escala.
 ///
@@ -75,6 +76,19 @@ pub struct Meter {
     rms: AtomicU32,
     peak: AtomicU32,
     frames: AtomicU64,
+    /// Cuando se pidio la captura. El medidor se construye en la primera linea de
+    /// `Recorder::start`, asi que este es el instante en que el usuario dio al boton.
+    started: Instant,
+    /// Microsegundos desde `started` hasta que el dispositivo dijo estar abierto.
+    /// Cero significa "todavia no".
+    opened_us: AtomicU64,
+    /// Microsegundos desde `started` hasta la primera ventana de audio que llego de
+    /// verdad. Cero significa "todavia no ha llegado ninguna".
+    ///
+    /// Es la unica de las dos que dice la verdad sobre lo que se pierde: un dispositivo
+    /// puede dar por abierta la sesion y tardar despues en entregar la primera muestra, y
+    /// lo que se hable en ese hueco no es que se descarte, es que no existe.
+    first_frame_us: AtomicU64,
 }
 
 /// Un medidor recien creado esta en el suelo, no en cero. Cero bits es 0,0 dB, que es el
@@ -85,6 +99,9 @@ impl Default for Meter {
             rms: AtomicU32::new(FLOOR_DBFS.to_bits()),
             peak: AtomicU32::new(FLOOR_DBFS.to_bits()),
             frames: AtomicU64::new(0),
+            started: Instant::now(),
+            opened_us: AtomicU64::new(0),
+            first_frame_us: AtomicU64::new(0),
         }
     }
 }
@@ -110,6 +127,16 @@ impl Meter {
 
         self.frames
             .fetch_add(samples.len() as u64, Ordering::Relaxed);
+
+        // Al final y no al principio: quien lee el estado vera siempre la marca **y** las
+        // muestras contadas. Al reves hay una ventana en la que el estado dice "llego la
+        // primera muestra" con el contador todavia a cero, que es justo la contradiccion
+        // que hace desconfiar de un diagnostico. Sellar cuesta una carga relajada por
+        // llamada; el reloj se consulta una sola vez en toda la captura.
+        if self.first_frame_us.load(Ordering::Relaxed) == 0 {
+            self.first_frame_us
+                .store(self.micros_desde_el_arranque(), Ordering::Relaxed);
+        }
     }
 
     /// Lee el nivel y reinicia el pico retenido.
@@ -131,6 +158,39 @@ impl Meter {
     pub fn frames(&self) -> u64 {
         self.frames.load(Ordering::Relaxed)
     }
+
+    /// Anota que el dispositivo ya esta abierto y arrancado. La llama el hilo de captura
+    /// una vez, justo despues de `play()`.
+    pub fn mark_opened(&self) {
+        self.opened_us
+            .store(self.micros_desde_el_arranque(), Ordering::Relaxed);
+    }
+
+    /// Lo que tardo el dispositivo en decir que estaba abierto, en milisegundos.
+    pub fn opened_ms(&self) -> Option<u64> {
+        milis(self.opened_us.load(Ordering::Relaxed))
+    }
+
+    /// Lo que tardo en llegar la primera muestra, en milisegundos.
+    ///
+    /// `None` mientras no haya llegado ninguna, que no es lo mismo que cero: es la
+    /// diferencia entre "instantaneo" y "el dispositivo abrio y no entrega nada".
+    pub fn first_sample_ms(&self) -> Option<u64> {
+        milis(self.first_frame_us.load(Ordering::Relaxed))
+    }
+
+    /// Nunca devuelve cero: cero es el valor que significa "todavia no", y un arranque
+    /// mas rapido que el reloj se leeria como que no ha pasado.
+    fn micros_desde_el_arranque(&self) -> u64 {
+        u64::try_from(self.started.elapsed().as_micros())
+            .unwrap_or(u64::MAX)
+            .max(1)
+    }
+}
+
+/// Microsegundos a milisegundos, con el cero como "todavia no".
+fn milis(micros: u64) -> Option<u64> {
+    (micros > 0).then_some(micros / 1000)
 }
 
 #[cfg(test)]
@@ -203,6 +263,46 @@ mod tests {
         // Y despues de leerlo, se reinicia: si no, la barra se quedaria clavada arriba.
         meter.push(&[0.001; 4]);
         assert!(meter.read().peak_dbfs < -50.0);
+    }
+
+    /// Sin ventanas no hay primera ventana. Es la distincion que hace util el numero:
+    /// "todavia no ha llegado nada" y "llego al instante" no pueden leerse igual.
+    #[test]
+    fn sin_muestras_no_hay_instante_de_la_primera() {
+        let meter = Meter::new();
+        assert_eq!(meter.first_sample_ms(), None);
+        assert_eq!(meter.opened_ms(), None);
+
+        meter.push(&[0.0; 480]);
+        assert!(
+            meter.first_sample_ms().is_some(),
+            "una ventana de silencio sigue siendo una ventana que llego"
+        );
+        assert!(
+            meter.frames() > 0,
+            "hay marca de primera muestra y el contador dice que no llego nada"
+        );
+    }
+
+    /// La marca es la de la **primera** ventana, no la de la ultima. Si se sobrescribiera,
+    /// el numero seria "hace cuanto llego audio" y no "cuanto tardo en empezar a llegar".
+    #[test]
+    fn la_marca_es_la_de_la_primera_ventana_y_no_se_mueve() {
+        let meter = Meter::new();
+        meter.push(&[0.0; 480]);
+        let primera = meter.first_sample_ms();
+
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        meter.push(&[0.0; 480]);
+
+        assert_eq!(meter.first_sample_ms(), primera);
+    }
+
+    /// Un arranque mas rapido que el reloj no puede leerse como "no ha llegado nada".
+    #[test]
+    fn un_arranque_instantaneo_no_se_confunde_con_no_haber_arrancado() {
+        assert_eq!(milis(0), None);
+        assert_eq!(milis(1), Some(0), "un microsegundo son cero milisegundos, pero llego");
     }
 
     #[test]

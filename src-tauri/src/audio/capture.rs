@@ -99,6 +99,15 @@ pub struct CaptureStatus {
     /// Estado del detector de voz, si hay modelo descargado. `None` significa que no se
     /// esta detectando nada, que no es lo mismo que "no hay voz".
     pub vad: Option<VadState>,
+    /// Lo que tardo el dispositivo en decir que estaba abierto, desde que se pidio.
+    pub opened_ms: Option<u64>,
+    /// Lo que tardo en llegar la primera muestra.
+    ///
+    /// Es la ventana muerta del arranque: lo que se hable antes de esto no se descarta,
+    /// no existe. Va al estado y no solo al log porque es la diferencia entre "el
+    /// microfono no me oye" y "el microfono tarda medio segundo en encenderse", que en
+    /// pantalla se parecen y llevan a sitios opuestos.
+    pub first_sample_ms: Option<u64>,
 }
 
 impl CaptureStatus {
@@ -113,6 +122,8 @@ impl CaptureStatus {
             frames: 0,
             error: None,
             vad: None,
+            opened_ms: None,
+            first_sample_ms: None,
         }
     }
 }
@@ -248,6 +259,7 @@ impl Recorder {
                             ))));
                             return;
                         }
+                        thread_meter.mark_opened();
                         if let Some(silence) = keep_alive.as_ref() {
                             if let Err(err) = silence.play() {
                                 // Sin el flujo mudo el loopback sigue funcionando; lo que
@@ -309,6 +321,8 @@ impl Recorder {
                 .ok()
                 .and_then(|failure| failure.clone()),
             vad: self.vad.as_ref().map(LiveVad::state),
+            opened_ms: self.meter.opened_ms(),
+            first_sample_ms: self.meter.first_sample_ms(),
         }
     }
 }

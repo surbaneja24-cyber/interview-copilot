@@ -251,6 +251,15 @@ export interface CaptureStatus {
   readonly error: string | null;
   /** `null` si no hay modelo de VAD descargado, que no es lo mismo que "no hay voz". */
   readonly vad: VadState | null;
+  /** Lo que tardó el dispositivo en decir que estaba abierto, desde que se pidió. */
+  readonly openedMs: number | null;
+  /**
+   * Lo que tardó en llegar la primera muestra: la ventana muerta del arranque.
+   *
+   * Lo que se hable antes de esto no se descarta, no existe. `null` mientras no haya
+   * llegado ninguna, que no es lo mismo que cero.
+   */
+  readonly firstSampleMs: number | null;
 }
 
 export interface CaptureSnapshot {

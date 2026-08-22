@@ -27,6 +27,7 @@ use crate::embedding::EmbeddingProvider;
 use crate::error::{AppError, AppResult};
 use crate::llm::answer::{self, ScanEvent, StreamScanner};
 use crate::llm::prompt::{self, AnswerStyle, FragmentSet};
+use crate::training::{classifier, QuestionKind};
 use crate::llm::verify::{self, DroppedCitation, Unsupported, Verdict, VerifiedCitation};
 use crate::llm::{ChatRequest, LlmProvider, LlmSettings};
 use crate::rag::retriever::{Material, Retriever, DEFAULT_TOP_K};
@@ -151,7 +152,7 @@ impl Answering<'_> {
             project_id,
             question,
             DEFAULT_TOP_K,
-            material_for(style),
+            material_for(style, question),
         )?;
 
         Ok(FragmentSet::from_retrieval(&retrieval.chunks))
@@ -235,15 +236,41 @@ fn emit_failure(err: AppError, emit: &mut (dyn FnMut(AnswerEvent) + Send)) -> Ap
 /// - `Technical` es el caso mas peligroso de los tres, y por eso no se deja abierto: una
 ///   oferta enumera justo las herramientas que pide, asi que dejarla entrar es servirle al
 ///   modelo la lista de lo que le conviene decir que sabe.
-/// - `General` se queda como estaba, admitiendo todo. Es el cajon de sastre de los tres:
-///   ahi caen tanto "cuentame sobre ti" como "¿por que quieres trabajar aqui?", y esa
-///   segunda **necesita** la oferta. Elegir un lado seria adivinar cual de las dos tenia el
-///   usuario en la cabeza, y no hay nada medido que lo diga. Lo resuelve el clasificador de
-///   §7, que si distingue por tipo de pregunta.
-fn material_for(style: AnswerStyle) -> Material {
+/// - `General` era el cajon de sastre y quedo abierto esperando a §7: ahi caen tanto
+///   "cuentame sobre ti" como "¿por que quieres trabajar aqui?", y esa segunda **necesita**
+///   la oferta. **Desde el 2026-08-22 lo resuelve el clasificador**, que si distingue por
+///   tipo de pregunta en vez de adivinar cual de las dos tenia el usuario en la cabeza.
+fn material_for(style: AnswerStyle, question: &str) -> Material {
     match style {
         AnswerStyle::Behavioral | AnswerStyle::Technical => Material::CandidateOnly,
-        AnswerStyle::General => Material::All,
+        AnswerStyle::General => match classifier::classify(question).kind {
+            Some(kind) => material_for_kind(kind),
+            // **Sin clasificar se cierra**, y es un cambio respecto a como estaba.
+            //
+            // Los dos errores no cuestan lo mismo. Cerrar de mas ante una pregunta de
+            // motivacion da una respuesta mas pobre, y se ve: el modelo dira que no tiene
+            // material. Abrir de mas mete en el top 5 un documento que dice lo que la
+            // empresa pide, la barrera de §5 lo deja pasar porque esa frase si esta en los
+            // documentos, y sale una experiencia inventada con cita real. Eso no se ve.
+            None => Material::CandidateOnly,
+        },
+    }
+}
+
+/// Que material sostiene una respuesta a una pregunta de este tipo (§5.2).
+///
+/// Cinco de los seis salen de la medicion. `Situational` no: el banco solo trae dos
+/// preguntas de ese tipo y con dos no se mide nada, asi que **esta razonado y no medido**, y
+/// queda dicho aqui igual que `DocumentKind::Other`. El razonamiento es el de `Technical`:
+/// "¿que harias si…" pregunta por el criterio del candidato, y una oferta que enumera lo que
+/// la empresa espera es exactamente la lista de lo que conviene contestar.
+fn material_for_kind(kind: QuestionKind) -> Material {
+    match kind {
+        QuestionKind::Behavioral
+        | QuestionKind::Experience
+        | QuestionKind::SelfAssessment
+        | QuestionKind::Situational => Material::CandidateOnly,
+        QuestionKind::Motivation | QuestionKind::Logistics => Material::All,
     }
 }
 
@@ -335,6 +362,51 @@ mod tests {
     use crate::storage::{DocumentKind, StoredChunk};
 
     const TEXTO: &str = "Lideré la migración de un monolito a microservicios en Acme.";
+
+    /// Los dos estilos cerrados no dependen de la pregunta: estan medidos en §5.2 y el
+    /// clasificador no tiene nada que decir ahi.
+    #[test]
+    fn behavioral_y_technical_no_consultan_la_pregunta() {
+        for estilo in [AnswerStyle::Behavioral, AnswerStyle::Technical] {
+            assert_eq!(
+                material_for(estilo, "¿por qué quieres trabajar aquí?"),
+                Material::CandidateOnly,
+                "{estilo:?} dejo entrar material de la empresa"
+            );
+        }
+    }
+
+    /// El cajon de sastre: la misma `General` con dos preguntas distintas tiene que dar dos
+    /// materiales distintos. Es lo que §5.2 dejo pendiente de §7, y si esto no cambia con la
+    /// pregunta es que el clasificador no esta enchufado.
+    #[test]
+    fn general_deja_de_ser_un_cajon_de_sastre() {
+        assert_eq!(
+            material_for(AnswerStyle::General, "¿Por qué quieres trabajar aquí?"),
+            Material::All,
+            "una pregunta de motivacion necesita la oferta: contestarla sin leerla es el \
+             error contrario"
+        );
+        assert_eq!(
+            material_for(
+                AnswerStyle::General,
+                "Háblame de una vez que tuviste un conflicto con un compañero"
+            ),
+            Material::CandidateOnly,
+            "una pregunta de comportamiento con la oferta dentro es experiencia inventable"
+        );
+    }
+
+    /// Y cuando el clasificador no se moja se cierra, que es lo contrario de lo que hacia
+    /// antes. Los dos errores no cuestan lo mismo: cerrar de mas da una respuesta pobre y se
+    /// ve, abrir de mas da una experiencia inventada con cita real y no se ve.
+    #[test]
+    fn sin_clasificar_se_cierra() {
+        assert_eq!(
+            material_for(AnswerStyle::General, "¿Me oyes bien?"),
+            Material::CandidateOnly
+        );
+    }
 
     fn fragmentos() -> FragmentSet {
         FragmentSet::from_retrieval(&[RetrievedChunk {

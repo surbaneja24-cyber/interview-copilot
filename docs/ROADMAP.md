@@ -352,7 +352,17 @@ se borraron el 2026-08-22, comprobando que los trozos del CV siguen a la misma d
 - [ ] Respuesta instantánea para preguntas ya entrenadas, con el LLM adaptándola después
 - [ ] Las preguntas saltadas se guardan como huecos, hoy solo se enseñan al terminar (§13)
 
-- [ ] Clasificador de preguntas: reglas primero, LLM solo ante ambigüedad (§7)
+- [x] **Clasificador de preguntas: reglas primero, LLM solo ante ambigüedad** (§7,
+      `ARCHITECTURE.md` §5.4). Sin un solo umbral que calibrar: cada patrón suma un punto y
+      solo hay dos formas de abstenerse, que nadie puntúe o que haya empate. Sobre un corpus
+      **sellado antes de escribir las reglas**: **31 de 32 bien, 0 equivocadas, 1 al modelo**.
+      Y el control, que es lo que sostiene la arquitectura: **ninguna de las 7 frases que no
+      son preguntas de entrevista recibe tipo**
+- [x] **`General` deja de ser un cajón de sastre en la recuperación.** Era lo que §5.2 dejó
+      pendiente de §7: ahora el material sale del tipo de pregunta, y cuando el clasificador
+      no se moja **se cierra**, porque abrir de más da experiencia inventada con cita real y
+      eso no se ve
+- [ ] Resolver con el LLM las preguntas en las que las reglas se abstienen
 - [ ] Máquina de estados de la entrevista
 - [ ] Retrieval especulativo durante las pausas
 - [ ] Prefijo de prompt cacheado

@@ -956,6 +956,96 @@ Rust y no en el frontend por dos motivos: aqui hay tests y en el frontend no (§
 tests), y la Fase 7 pide lo mismo para Practica — que pregunta por cada respuesta si se
 guarda como material — asi que reescribirlo alli seria tener dos filtros que se separan.
 
+## 5.4 El clasificador de preguntas, y el "no se" que lo sostiene (2026-08-22)
+
+§5.2 cerro `Behavioral` y `Technical` al material de la empresa y dejo `General` abierto
+diciendo "lo resuelve el clasificador de §7". Este es ese clasificador.
+
+Decide dos cosas en la entrevista: **con que material se contesta** y **con que forma** se
+redacta la sugerencia. Vive junto a la taxonomia, en `training/classifier.rs`, porque lo que
+produce es un `QuestionKind` y ese enum se define ahi.
+
+### Reglas primero, y por que no el modelo
+
+Es la decision del cuadro de riesgos: clasificar con el LLM anade **una pasada entera** al
+camino critico, y la latencia es el punto mas delicado del producto (§10). Una pregunta de
+entrevista es de las pocas cosas de este dominio con formulas fijas —"cuentame una vez que…",
+"que harias si…", "cuales son tus expectativas salariales"—, asi que las reglas contestan la
+mayoria en microsegundos.
+
+**Y no hay ni un umbral que calibrar.** Cada patron que encaja suma un punto a su tipo; gana
+el que mas tenga. Solo hay dos formas de quedarse sin respuesta, y ninguna lleva numero
+dentro: que nadie puntue, o que haya empate arriba. Se eligio asi contra la alternativa
+evidente, que era pesar los patrones — un peso es una constante puesta a ojo, y este proyecto
+ya ha pagado dos veces por una. Cuando un patron generico se comia a uno especifico, la
+solucion fue **estrechar el generico**: "cuentame un…" no dice nada, "cuentame una vez que…"
+si.
+
+Los acentos no cuentan, al reves que en el WER de §4.4. Alli "años" y "anos" son palabras
+distintas y esa diferencia es justo lo que se mide; aqui el texto llega de whisper, que a
+veces se los come, y ninguna de las seis clases depende de una tilde.
+
+### Los tres corpus, y cual de ellos vale
+
+| Corpus | Que es | Que demuestra |
+|---|---|---|
+| Las 20 de `QUESTIONS` | Desarrollo. Se mira mientras se escriben las reglas | Poco: acertar donde has mirado |
+| `EVALUACION`, 32 preguntas | **Sellado.** Escrito antes que las reglas, sin tocarlo despues | El numero que se publica |
+| `SIN_TIPO`, 7 frases | **Control.** Cosas que se dicen en una entrevista y no son ninguna de las seis | Que el "no se" existe |
+
+Lo del corpus sellado es la leccion que dejo Trading Lab: un conjunto de evaluacion que se
+ajusta hasta que el resultado gusta ha dejado de medir y se ha convertido en la
+implementacion escrita dos veces.
+
+### Lo medido
+
+| Corpus | Bien | Equivocadas | Al modelo |
+|---|---|---|---|
+| Banco (desarrollo) | 19/20 | **0** | 1 |
+| **Sellado** | **31/32** | **0** | 1 |
+| Control | — | **0 de 7 reciben tipo** | 7 |
+
+**96% de las preguntas se resuelven sin modelo y ninguna sale con el tipo equivocado.**
+
+Las dos cifras no valen lo mismo y el test lo dice: la abstencion tiene salida —la resuelve
+el LLM— y una clasificacion equivocada no la tiene, porque cambia el material con el que se
+contesta sin que nadie se entere. Por eso lo que se exige es cero equivocadas, no un
+porcentaje bonito.
+
+**El control es el que sostiene la arquitectura entera.** Si "¿me oyes bien?" recibiera
+etiqueta, "reglas primero y el LLM solo ante ambiguedad" seria una frase vacia: no habria
+ambiguedad que detectar, habria un valor por defecto con nombre de decision.
+
+### La unica que no se clasifica, y por que es la respuesta correcta
+
+*"¿De que logro profesional estas mas orgulloso?"*. El banco la tiene como `Experience` desde
+el 19-08. Al escribir el corpus sellado, sin mirar el banco, la casi identica *"¿De que
+trabajo te sientes mas orgulloso?"* salio etiquetada como `SelfAssessment`.
+
+**Dos personas etiquetando lo mismo de dos formas distintas es la definicion operativa de
+ambiguo.** Asi que la regla se quito y las dos van al modelo. Inventar un desempate habria
+sido decidir a ojo lo que ni el propio proyecto tiene decidido, y habria salido 20/20 y 32/32
+en las tablas de arriba: mejor numero, peor sistema.
+
+Se toco el corpus sellado una sola vez y queda escrito en el fichero: "¿Tienes alguna pregunta
+para nosotros?" estaba en el control, y el banco la tiene como `Motivation` desde el 19-08. El
+banco es anterior, asi que la equivocada era la lista. Es una correccion contra una autoridad
+externa y previa, no un ajuste para mejorar un numero.
+
+### Que cambia en la recuperacion
+
+`material_for` deja de mirar solo el estilo y consulta al clasificador cuando el estilo es
+`General`. El reparto por tipo sale de §5.2 para cinco de los seis; `Situational` **esta
+razonado y no medido** —el banco solo trae dos preguntas de ese tipo— y queda dicho igual que
+`DocumentKind::Other`: "¿que harias si…" pregunta por el criterio del candidato, y una oferta
+que enumera lo que la empresa espera es la lista de lo que conviene contestar.
+
+**Y cuando el clasificador no se moja, se cierra.** Es un cambio respecto a como estaba, y
+sale de que los dos errores no cuestan lo mismo: cerrar de mas da una respuesta mas pobre y
+**se ve**, porque el modelo dice que no tiene material; abrir de mas mete en el top 5 un
+documento que dice lo que la empresa pide, la barrera de §5 lo deja pasar porque esa frase si
+esta en los documentos, y sale experiencia inventada con cita real. Eso **no se ve**.
+
 ## 6. Protección de captura (§26-33)
 
 Interfaz `CaptureProtection` con `enable` / `disable` / `is_supported` / `get_status`, y tres modos: `OFF`, `EXCLUDE_FROM_CAPTURE`, `MONITOR_ONLY`.

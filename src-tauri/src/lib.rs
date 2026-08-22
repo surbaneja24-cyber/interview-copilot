@@ -35,6 +35,15 @@ use storage::{Db, Document, DocumentKind, NewDocument, NewProject, Project};
 const DB_FILE: &str = "interview-copilot.db";
 const MODELS_DIR: &str = "models";
 
+/// De que tipo es una pregunta de entrevista (§7), o `null` si las reglas no se mojan.
+///
+/// Por reglas y sin modelo: son microsegundos, y clasificar con el LLM anadiria una pasada
+/// entera al camino critico. Un `kind` nulo es el caso que el modelo tiene que resolver.
+#[tauri::command]
+fn classify_question(question: String) -> training::classifier::Classification {
+    training::classifier::classify(&question)
+}
+
 /// Mira una respuesta dictada antes de guardarla, para que el modo diapositiva no archive
 /// solo lo que no lo parece. Es una funcion pura y no toca ni la base ni el disco.
 #[tauri::command]
@@ -498,6 +507,7 @@ pub fn run() {
             training_questions,
             save_prepared_answer,
             review_answer,
+            classify_question,
             index_pending,
             search_context,
             model_status,

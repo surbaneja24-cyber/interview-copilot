@@ -605,12 +605,48 @@ Una precaucion mas, pequena y de la misma familia: la marca de la primera muestr
 que el estado decia "ya llego la primera muestra" con el contador todavia a cero, y un
 diagnostico que se contradice a si mismo no sirve para diagnosticar nada.
 
-### Lo que sale de aqui
+### El arreglo: la sesion se comparte, el estado no
 
-- **Cargar Silero una vez y conservarlo** entre aperturas, en vez de en cada `Recorder::start`.
-  Es donde estan los 250 ms, y no cuesta ninguna constante nueva.
-- **No abrir el microfono a la vez que se ensena la pregunta.** Aunque la carga desaparezca
-  quedan los ~90 ms del dispositivo, y el modo diapositiva no tiene por que regalarlos: puede
+`VadModel` es el modelo ya cargado, y vive en `AppState` como el provider de LLM y por el
+mismo motivo. `Recorder::start` lo recibe cargado en vez de recibir una ruta.
+
+Lo que se comparte es la **sesion de ONNX Runtime**, no el detector. Una sesion de ORT es
+`Send + Sync` y la inferencia no la muta —el estado recurrente de la v5 viaja como tensor de
+entrada y de salida—, asi que el microfono y el loopback pueden usar la misma a la vez.
+Cada captura se construye su `Silero`, con el estado a cero. Compartir tambien el estado
+haria que el primer turno de una fuente arrastrase el final de la otra, y ese es
+exactamente el tipo de fallo que §4.2 describe: no da error, da probabilidades plausibles.
+
+Dos cosas que no cambian, a proposito:
+
+- **El fallo sigue apareciendo al pulsar "Escuchar".** El modelo se carga bajo demanda, no al
+  arrancar, y una carga fallida no se guarda en la cache. Un ONNX corrupto sigue siendo un
+  error visible de "arrancar la captura" y no un hilo que muere en silencio, que era la razon
+  de cargarlo donde se cargaba.
+- **Sin modelo descargado la captura arranca igual**, sin deteccion de voz. Obligar a bajar
+  2,3 MB antes de poder ver el medidor seria poner una puerta donde no hace falta.
+
+| Condicion | Ventana muerta (mediana) | Min | Max |
+|---|---|---|---|
+| primera apertura del proceso | 202 ms | — | — |
+| en caliente, sin VAD | 74 ms | 70 | 83 |
+| **en caliente, VAD compartido (hoy)** | **72 ms** | 69 | 86 |
+| en caliente, VAD recargado (antes) | 183 ms | 178 | 217 |
+
+**111 ms menos por apertura**, y la fila de abajo es la que da derecho a decirlo: es el
+comportamiento viejo medido en la misma pasada y en la misma maquina, no un numero recordado
+de antes del cambio.
+
+El ahorro depende de lo caliente que este ORT. Medido el 2026-08-22 en dos pasadas: **250 ms
+la primera vez que se midio** —cuando la sesion del banco era la primera del proceso— y 111
+ms una vez el motor y la cache de disco estan calientes. La primera apertura de todas costo
+544 ms. En la app la secuencia real es la mala: el usuario abre el microfono en la primera
+pregunta, que es la fria.
+
+### Lo que sigue pendiente de aqui
+
+- **No abrir el microfono a la vez que se ensena la pregunta.** Aunque la carga ya no este,
+  quedan los ~72 ms del dispositivo, y el modo diapositiva no tiene por que regalarlos: puede
   abrirlo mientras se dibuja la pregunta anterior.
 - **`firstSampleMs` a la vista en Ajustes → Microfono.** El numero ya viaja en el estado; un
   micrófono que tarda un segundo en arrancar es un problema del equipo del usuario, y sin

@@ -30,7 +30,6 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
-use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -40,7 +39,7 @@ use ringbuf::traits::Producer;
 
 use crate::audio::level::{Level, Meter};
 use crate::audio::resample;
-use crate::audio::vad::{LiveVad, SampleSink, VadState};
+use crate::audio::vad::{LiveVad, SampleSink, VadModel, VadState};
 use crate::stt::transcriber::TurnSink;
 use crate::error::{AppError, AppResult};
 
@@ -219,10 +218,13 @@ impl Recorder {
     /// `vad_model` es opcional: sin el, la captura funciona igual y no hay deteccion de
     /// voz. Es deliberado — el medidor y la eleccion de dispositivo tienen que poder
     /// usarse antes de descargar nada.
+    ///
+    /// Llega **ya cargado** y no como ruta: leer el ONNX aqui costaba 250 ms por apertura,
+    /// y esa espera va justo por delante de abrir el dispositivo (§4.6).
     pub fn start(
         source: Source,
         requested: Option<String>,
-        vad_model: Option<PathBuf>,
+        vad_model: Option<VadModel>,
         turns: Option<TurnSink>,
     ) -> AppResult<Self> {
         let meter = Arc::new(Meter::new());
@@ -512,7 +514,15 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
+
+    /// Carga el modelo del VAD para un test. En la app esto ocurre una vez por proceso y
+    /// lo guarda `AppState`; aqui cada test se lo carga y lo tira.
+    fn cargar_vad(ruta: &str) -> VadModel {
+        VadModel::load(std::path::Path::new(ruta)).expect("cargar el modelo del VAD")
+    }
 
     /// Por encima de esto ya no hay duda de que el modelo esta viendo voz. No es el umbral
     /// de decision del VAD —ese es cosa de `vad`— sino lo que se le exige a este test.
@@ -612,7 +622,7 @@ mod tests {
             panic!("define INTERVIEW_COPILOT_VAD con la ruta de silero_vad.onnx");
         };
 
-        let recorder = Recorder::start(Source::System, None, Some(PathBuf::from(model)), None)
+        let recorder = Recorder::start(Source::System, None, Some(cargar_vad(&model)), None)
             .expect("abrir el loopback con VAD");
 
         // Una frase larga: el detector necesita al menos dos ventanas de 32 ms con voz
@@ -681,7 +691,7 @@ mod tests {
         let _recorder = Recorder::start(
             Source::System,
             None,
-            Some(PathBuf::from(vad_model)),
+            Some(cargar_vad(&vad_model)),
             transcriber.sender(),
         )
         .expect("abrir el loopback con VAD y transcripcion");
@@ -757,7 +767,7 @@ mod tests {
         let recorder = Recorder::start(
             Source::Mic,
             None,
-            Some(PathBuf::from(vad_model)),
+            Some(cargar_vad(&vad_model)),
             transcriber.sender(),
         )
         .expect("abrir el microfono con VAD y transcripcion");

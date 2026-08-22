@@ -58,6 +58,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::audio::capture::{Recorder, Source};
+use crate::audio::vad::VadModel;
 use crate::audio::resample::TARGET_HZ;
 use crate::audio::vad::{Event, VoiceTracker, FRAME_MS, FRAME_SAMPLES, PREROLL_FRAMES};
 use crate::testing;
@@ -412,14 +413,53 @@ const APERTURAS: usize = 10;
 /// importa.
 const SONDEOS_MS: &[u64] = &[1, 50];
 
-/// Abre el microfono, espera a la primera muestra y devuelve (abre_ms, primera_ms, muestras).
-///
-/// `vad` es la ruta del ONNX o `None`. No es un detalle: `Recorder::start` carga el modelo
-/// **antes** de tocar el dispositivo, asi que medir sin el mide media cadena. La app real
-/// siempre lo pasa.
-fn cronometra_una_apertura(espera_ms: u64, vad: Option<&Path>) -> (u64, u64, u64) {
-    let recorder = Recorder::start(Source::Mic, None, vad.map(Path::to_path_buf), None)
-        .expect("abrir el micrófono");
+/// De donde sale el modelo del VAD en una apertura.
+enum ModeloVad<'a> {
+    /// Sin deteccion de voz: mide solo el dispositivo.
+    Ninguno,
+    /// Ya cargado, que es lo que hace la app desde el 2026-08-22.
+    Compartido(&'a VadModel),
+    /// Cargado **dentro** de la medida, que es lo que hacia `Recorder::start` hasta
+    /// entonces. Tiene que ir dentro o la comparacion no vale: el reloj de `Meter` arranca
+    /// en `Recorder::start`, asi que una carga hecha antes de llamarlo no la ve nadie y las
+    /// dos filas salen iguales. Paso de verdad, y lo cazo el control.
+    Recargado(&'a Path),
+}
+
+/// Lo que cuesta una apertura, desglosado.
+struct Apertura {
+    /// Leer el ONNX y construir la sesion, cero si no habia que cargarlo.
+    carga_ms: u64,
+    /// Desde que se pide la captura hasta que el dispositivo dice estar abierto.
+    abre_ms: u64,
+    /// Desde que se pide la captura hasta la primera ventana de audio.
+    primera_ms: u64,
+    muestras: u64,
+}
+
+impl Apertura {
+    /// La ventana muerta de verdad: todo lo que pasa entre pedir el microfono y tener
+    /// audio. La carga cuenta porque ocurre antes de abrir el dispositivo, asi que lo que
+    /// se diga durante ella tampoco existe.
+    fn ventana_muerta_ms(&self) -> u64 {
+        self.carga_ms + self.primera_ms
+    }
+}
+
+/// Abre el microfono y espera a la primera muestra.
+fn cronometra_una_apertura(espera_ms: u64, modelo: &ModeloVad) -> Apertura {
+    let empezo = std::time::Instant::now();
+    let (vad, carga_ms) = match modelo {
+        ModeloVad::Ninguno => (None, 0),
+        ModeloVad::Compartido(cargado) => (Some((*cargado).clone()), 0),
+        ModeloVad::Recargado(ruta) => {
+            let cargado = VadModel::load(ruta).expect("cargar el modelo del VAD");
+            let coste = u64::try_from(empezo.elapsed().as_millis()).unwrap_or(u64::MAX);
+            (Some(cargado), coste)
+        }
+    };
+
+    let recorder = Recorder::start(Source::Mic, None, vad, None).expect("abrir el microfono");
 
     // Se espera a la primera muestra, no un rato fijo: un rato fijo mediria el rato.
     let limite = std::time::Instant::now() + std::time::Duration::from_secs(5);
@@ -429,13 +469,41 @@ fn cronometra_una_apertura(espera_ms: u64, vad: Option<&Path>) -> (u64, u64, u64
         estado = recorder.status();
     }
 
-    let primera = estado
-        .first_sample_ms
-        .expect("cinco segundos sin una sola muestra: el dispositivo abrió y no entrega nada");
-    let abre = estado.opened_ms.expect("el dispositivo no marcó su apertura");
-    (abre, primera, estado.frames)
+    Apertura {
+        carga_ms,
+        abre_ms: estado.opened_ms.expect("el dispositivo no marco su apertura"),
+        primera_ms: estado
+            .first_sample_ms
+            .expect("cinco segundos sin una sola muestra: abrio y no entrega nada"),
+        muestras: estado.frames,
+    }
     // Al soltar el `Recorder` se espera al hilo, asi que el dispositivo queda libre antes
     // de la siguiente vuelta. Sin eso se estaria midiendo la cola de la anterior.
+}
+
+/// Una tanda de aperturas en la misma condicion. Devuelve las ventanas muertas.
+fn tanda(titulo: &str, espera_ms: u64, modelo: &ModeloVad) -> Vec<u64> {
+    println!("=== {titulo} ===");
+    println!(
+        "  {:<10} {:>9} {:>9} {:>14} {:>15} {:>9}",
+        "apertura", "carga ms", "abre ms", "1a muestra ms", "vent. muerta", "muestras"
+    );
+
+    let mut muertas = Vec::new();
+    for intento in 0..APERTURAS {
+        let a = cronometra_una_apertura(espera_ms, modelo);
+        println!(
+            "  {intento:<10} {:>9} {:>9} {:>14} {:>15} {:>9}",
+            a.carga_ms,
+            a.abre_ms,
+            a.primera_ms,
+            a.ventana_muerta_ms(),
+            a.muestras
+        );
+        muertas.push(a.ventana_muerta_ms());
+    }
+    println!();
+    muertas
 }
 
 fn mediana(valores: &[u64]) -> u64 {
@@ -466,105 +534,84 @@ fn la_ventana_muerta_del_arranque() {
     // vez de dar por cadena completa media cadena.
     let vad = std::env::var("INTERVIEW_COPILOT_VAD").ok().map(PathBuf::from);
     match vad.as_deref() {
-        Some(ruta) => println!("con el VAD de {}
-", ruta.display()),
+        Some(ruta) => println!("con el VAD de {}\n", ruta.display()),
         None => println!(
-            "sin INTERVIEW_COPILOT_VAD: se mide solo el dispositivo, no la carga del modelo              que la app hace antes
-"
+            "sin INTERVIEW_COPILOT_VAD: se mide solo el dispositivo, no la carga del modelo\n"
         ),
     }
 
-    let (abre_frio, primera_fria, muestras_frias) = cronometra_una_apertura(1, None);
+    let fria = cronometra_una_apertura(1, &ModeloVad::Ninguno);
     println!(
-        "primera apertura del proceso: abre a los {abre_frio} ms, primera muestra a los          {primera_fria} ms ({muestras_frias} muestras)
-"
+        "primera apertura del proceso: abre a los {} ms, primera muestra a los {} ms\n",
+        fria.abre_ms, fria.primera_ms
     );
 
-    let mut por_sondeo: Vec<(u64, Vec<u64>, Vec<u64>)> = Vec::new();
+    let finas = tanda("en caliente, sondeando cada 1 ms", 1, &ModeloVad::Ninguno);
+    let gruesas = tanda("en caliente, sondeando cada 50 ms", 50, &ModeloVad::Ninguno);
 
-    for espera_ms in SONDEOS_MS {
-        println!("=== en caliente, sondeando cada {espera_ms} ms ===");
-        println!(
-            "  {:<10} {:>10} {:>16} {:>10}",
-            "apertura", "abre ms", "1a muestra ms", "muestras"
-        );
-
-        let mut aperturas = Vec::new();
-        let mut primeras = Vec::new();
-
-        for intento in 0..APERTURAS {
-            let (abre, primera, muestras) = cronometra_una_apertura(*espera_ms, None);
-            println!("  {intento:<10} {abre:>10} {primera:>16} {muestras:>10}");
-            aperturas.push(abre);
-            primeras.push(primera);
+    // Las dos versiones del camino de la app. Juntas son la medida del arreglo y su propio
+    // control: si salieran iguales, compartir la sesion no estaria haciendo nada.
+    let (compartido, recargado) = match vad.as_deref() {
+        Some(ruta) => {
+            let modelo = VadModel::load(ruta).expect("cargar el modelo del VAD");
+            (
+                Some(tanda(
+                    "en caliente, con el VAD ya cargado (como esta hoy)",
+                    1,
+                    &ModeloVad::Compartido(&modelo),
+                )),
+                Some(tanda(
+                    "ANTES: cargando el VAD en cada apertura",
+                    1,
+                    &ModeloVad::Recargado(ruta),
+                )),
+            )
         }
+        None => (None, None),
+    };
 
-        por_sondeo.push((*espera_ms, aperturas, primeras));
-        println!();
+    println!("{:<36} {:>14} {:>8} {:>8}", "condicion", "vent. muerta", "min", "max");
+    let fila = |nombre: &str, muertas: &[u64]| {
+        println!(
+            "{nombre:<36} {:>14} {:>8} {:>8}",
+            mediana(muertas),
+            muertas.iter().min().expect("hay medidas"),
+            muertas.iter().max().expect("hay medidas"),
+        );
+    };
+    fila("primera apertura del proceso", &[fria.ventana_muerta_ms()]);
+    fila("caliente, sondeo cada 1 ms", &finas);
+    fila("caliente, sondeo cada 50 ms", &gruesas);
+    if let Some(muertas) = compartido.as_ref() {
+        fila("caliente, VAD compartido (hoy)", muertas);
+    }
+    if let Some(muertas) = recargado.as_ref() {
+        fila("caliente, VAD recargado (antes)", muertas);
     }
 
-    // Y el camino de la app: el modelo del VAD se carga antes de abrir el dispositivo, y
-    // eso tambien es tiempo en el que lo que se diga no existe.
-    let con_vad: Option<Vec<u64>> = vad.as_deref().map(|ruta| {
-        println!("=== en caliente, con el VAD cargando, sondeando cada 1 ms ===");
-        println!(
-            "  {:<10} {:>10} {:>16} {:>10}",
-            "apertura", "abre ms", "1a muestra ms", "muestras"
-        );
-        let mut primeras = Vec::new();
-        for intento in 0..APERTURAS {
-            let (abre, primera, muestras) = cronometra_una_apertura(1, Some(ruta));
-            println!("  {intento:<10} {abre:>10} {primera:>16} {muestras:>10}");
-            primeras.push(primera);
-        }
-        println!();
-        primeras
-    });
-
-    println!(
-        "{:<16} {:>10} {:>10} {:>12} {:>10} {:>10}",
-        "condicion", "abre min", "abre max", "1a mediana", "1a min", "1a max"
-    );
-    println!(
-        "{:<16} {abre_frio:>10} {abre_frio:>10} {primera_fria:>12} {primera_fria:>10} {primera_fria:>10}",
-        "en frio"
-    );
-    for (espera_ms, aperturas, primeras) in &por_sondeo {
-        println!(
-            "{:<16} {:>10} {:>10} {:>12} {:>10} {:>10}",
-            format!("caliente/{espera_ms}ms"),
-            aperturas.iter().min().expect("hay medidas"),
-            aperturas.iter().max().expect("hay medidas"),
-            mediana(primeras),
-            primeras.iter().min().expect("hay medidas"),
-            primeras.iter().max().expect("hay medidas"),
-        );
-    }
-
-    if let Some(primeras) = con_vad.as_ref() {
-        println!(
-            "{:<16} {:>10} {:>10} {:>12} {:>10} {:>10}",
-            "caliente/con VAD",
-            "-",
-            "-",
-            mediana(primeras),
-            primeras.iter().min().expect("hay medidas"),
-            primeras.iter().max().expect("hay medidas"),
-        );
-    }
-
-    let (_, _, finas) = por_sondeo.first().expect("hay sondeos");
-    let (_, _, gruesas) = por_sondeo.last().expect("hay sondeos");
-    let (fina, gruesa) = (mediana(finas), mediana(gruesas));
-
-    // El control. La marca se pone dentro de la llamada de retorno de audio, asi que mirar
+    // Control 1: la marca se pone dentro de la llamada de retorno de audio, asi que mirar
     // cincuenta veces menos a menudo no puede cambiarla. Si la cambiase, esta tabla mediria
     // el bucle de espera y no el dispositivo.
+    let (fina, gruesa) = (mediana(&finas), mediana(&gruesas));
     let diferencia = fina.abs_diff(gruesa);
     assert!(
         diferencia <= 20,
-        "la mediana en caliente sale {fina} ms sondeando cada {} ms y {gruesa} ms sondeando          cada {} ms: la diferencia de {diferencia} ms dice que el numero lo pone el que          mira, no el dispositivo",
+        "la mediana en caliente sale {fina} ms sondeando cada {} ms y {gruesa} ms sondeando \
+         cada {} ms: la diferencia de {diferencia} ms dice que el numero lo pone el que \
+         mira, no el dispositivo",
         SONDEOS_MS[0],
         SONDEOS_MS[SONDEOS_MS.len() - 1]
     );
+
+    // Control 2: recargar el modelo en cada apertura tiene que salir mas caro. Si no,
+    // compartirlo no esta ahorrando nada y el arreglo es imaginario.
+    if let (Some(hoy), Some(antes)) = (compartido.as_ref(), recargado.as_ref()) {
+        let (hoy, antes) = (mediana(hoy), mediana(antes));
+        println!("\nel modelo compartido ahorra {} ms por apertura", antes.saturating_sub(hoy));
+        assert!(
+            antes > hoy,
+            "recargar el modelo en cada apertura ({antes} ms) no sale mas caro que \
+             compartirlo ({hoy} ms): o el arreglo no hace nada, o este banco no lo ve"
+        );
+    }
 }

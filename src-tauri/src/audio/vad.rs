@@ -58,8 +58,39 @@ const STATE_SHAPE: [i64; 3] = [2, 1, 128];
 /// el contexto puesto, esa misma frase da 0,98.
 const CONTEXT_SAMPLES: usize = 64;
 
+/// El modelo del VAD ya cargado, listo para compartir entre capturas.
+///
+/// Existe porque **construir la sesion de ONNX Runtime cuesta 250 ms** y hasta el
+/// 2026-08-22 se hacia en cada `Recorder::start`, o sea una vez por pregunta en el modo
+/// diapositiva y siempre **antes** de abrir el dispositivo. Esa espera no retrasa el audio:
+/// lo borra, porque lo que se diga mientras no se ha capturado. Esta medido en §4.6.
+///
+/// Lo que se comparte es la **sesion**, no el estado. Una sesion de ORT es `Send + Sync` y
+/// la inferencia no la muta —el estado recurrente de la v5 viaja como tensor de entrada y
+/// salida—, asi que el microfono y el loopback pueden usar la misma a la vez sin pisarse.
+/// Cada captura se lleva un `Silero` nuevo, con su estado a cero: compartir el estado
+/// haria que el primer turno de una fuente arrastrase el final de la otra.
+#[derive(Clone)]
+pub struct VadModel(Arc<Session>);
+
+impl VadModel {
+    pub fn load(model: &Path) -> AppResult<Self> {
+        let session = Session::builder()
+            .and_then(|builder| builder.with_intra_threads(1))
+            .and_then(|builder| builder.commit_from_file(model))
+            .map_err(|err| AppError::Audio(format!("no se pudo cargar el VAD: {err}")))?;
+
+        Ok(Self(Arc::new(session)))
+    }
+
+    /// Un detector nuevo sobre este modelo, con el estado recurrente a cero.
+    pub fn tracker(&self) -> VoiceTracker {
+        VoiceTracker::sharing(self)
+    }
+}
+
 pub struct Silero {
-    session: Session,
+    session: Arc<Session>,
     /// El modelo es recurrente: la probabilidad de esta ventana depende de las anteriores.
     /// Perder el estado entre ventanas equivale a preguntarle por audio suelto.
     state: Vec<f32>,
@@ -70,18 +101,25 @@ pub struct Silero {
 }
 
 impl Silero {
+    /// Carga el modelo y se queda con el en exclusiva.
+    ///
+    /// Solo para los bancos de medida y el presupuesto de memoria, que abren el fichero una
+    /// vez y no comparten nada. La aplicacion pasa por `AppState`, que lo carga una sola vez
+    /// por proceso (§4.6); dejar este atajo disponible fuera de los tests invitaria a
+    /// volver a pagar los 111 ms por apertura sin enterarse.
+    #[cfg(test)]
     pub fn load(model: &Path) -> AppResult<Self> {
-        let session = Session::builder()
-            .and_then(|builder| builder.with_intra_threads(1))
-            .and_then(|builder| builder.commit_from_file(model))
-            .map_err(|err| AppError::Audio(format!("no se pudo cargar el VAD: {err}")))?;
+        Ok(Self::sharing(&VadModel::load(model)?))
+    }
 
-        Ok(Self {
-            session,
+    /// Un detector sobre un modelo ya cargado, con el estado recurrente a cero.
+    pub fn sharing(model: &VadModel) -> Self {
+        Self {
+            session: Arc::clone(&model.0),
             state: vec![0.0; 2 * 128],
             context: vec![0.0; CONTEXT_SAMPLES],
             input: Vec::with_capacity(CONTEXT_SAMPLES + FRAME_SAMPLES),
-        })
+        }
     }
 
     /// Probabilidad de que en esta ventana haya voz, de 0 a 1.
@@ -264,12 +302,19 @@ pub struct VoiceTracker {
 }
 
 impl VoiceTracker {
+    /// Carga el modelo para este detector solo. Igual que `Silero::load`: instrumental de
+    /// medida, no el camino de la aplicacion.
+    #[cfg(test)]
     pub fn new(model: &Path) -> AppResult<Self> {
-        Ok(Self {
-            silero: Silero::load(model)?,
+        Ok(Self::sharing(&VadModel::load(model)?))
+    }
+
+    pub fn sharing(model: &VadModel) -> Self {
+        Self {
+            silero: Silero::sharing(model),
             detector: TurnDetector::new(),
             last_probability: 0.0,
-        })
+        }
     }
 
     pub fn push(&mut self, frame: &[f32]) -> AppResult<Event> {
@@ -626,13 +671,15 @@ impl LiveVad {
     /// Crea la cola y arranca el hilo. Devuelve el extremo de escritura, que tiene que
     /// acabar dentro de la llamada de retorno de audio.
     pub fn start(
-        model: &Path,
+        model: &VadModel,
         source: crate::audio::Source,
         turns: Option<TurnSink>,
     ) -> AppResult<(Self, SampleSink)> {
-        // Se carga aqui y no en el hilo para que un modelo que falta o esta corrupto sea
-        // un error de "arrancar la captura" y no un hilo que muere en silencio.
-        let mut tracker = VoiceTracker::new(model)?;
+        // El detector se crea aqui y no en el hilo por lo mismo de siempre: un fallo tiene
+        // que ser un error de "arrancar la captura" y no un hilo que muere en silencio. Lo
+        // que ya no ocurre aqui es leer el ONNX del disco — eso pasa una vez por proceso,
+        // al cargar el `VadModel`, y esos 250 ms se los ahorra cada pregunta (§4.6).
+        let mut tracker = model.tracker();
 
         let (producer, mut consumer): (HeapProd<f32>, HeapCons<f32>) =
             HeapRb::<f32>::new(crate::audio::resample::TARGET_HZ as usize * QUEUE_SECONDS).split();

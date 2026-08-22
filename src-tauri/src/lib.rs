@@ -287,7 +287,7 @@ fn stop_capture(state: tauri::State<'_, AppState>, source: Source) -> AppResult<
 /// fallar al arrancar la captura.
 #[tauri::command]
 fn vad_model_present(state: tauri::State<'_, AppState>) -> bool {
-    state.vad_model().is_some()
+    state.vad_model_path().is_some()
 }
 
 /// Descarga el modelo del VAD (2,2 MB). Es `async` porque toca la red: un comando sincrono

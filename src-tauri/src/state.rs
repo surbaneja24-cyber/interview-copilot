@@ -3,7 +3,8 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use crate::audio::{vad, CaptureStatus, Recorder, Source};
+use crate::audio::vad::{self, VadModel};
+use crate::audio::{CaptureStatus, Recorder, Source};
 use crate::stt::{self, TranscriptState, Transcriber};
 use crate::embedding::LocalEmbeddingProvider;
 use crate::error::{AppError, AppResult};
@@ -40,6 +41,17 @@ pub struct AppState {
     /// tenga modelo, y el modelo de whisper no se carga hasta el primer turno: son ~200 MB
     /// y esta maquina los necesita para otras cosas mientras nadie hable.
     transcriber: Mutex<Option<Transcriber>>,
+    /// El modelo del VAD, cargado una vez y compartido por las dos capturas.
+    ///
+    /// Son 2,3 MB en disco y 250 ms de construir la sesion de ONNX Runtime, medidos en
+    /// §4.6. Cargarlo en cada `Recorder::start` —que es lo que se hacia— ponia esos 250 ms
+    /// por delante de abrir el dispositivo, una vez por pregunta en el modo diapositiva, y
+    /// lo que se hablase mientras tanto no se descartaba: no llegaba a existir.
+    ///
+    /// Se carga bajo demanda y no al arrancar, como el resto: sin el modelo descargado la
+    /// app tiene que abrir igual. Y si la carga falla no se guarda nada, con lo que el
+    /// fallo sigue apareciendo al pulsar "Escuchar" y no en un hilo que muere en silencio.
+    vad: Mutex<Option<VadModel>>,
 }
 
 impl AppState {
@@ -52,6 +64,7 @@ impl AppState {
             mic: Mutex::new(None),
             system: Mutex::new(None),
             transcriber: Mutex::new(None),
+            vad: Mutex::new(None),
         }
     }
 
@@ -112,7 +125,7 @@ impl AppState {
         // arranca sin ella. Obligar a descargar 2 MB antes de poder ver el medidor seria
         // poner una puerta donde no hace falta. Lo mismo con la transcripcion: sin modelo
         // de whisper hay VAD y no hay texto.
-        let model = self.vad_model();
+        let model = self.vad_model()?;
         let turns = self.turn_sink()?;
         let recorder = Recorder::start(source, device, model, turns)?;
         let status = recorder.status();
@@ -187,10 +200,34 @@ impl AppState {
         Ok(())
     }
 
-    /// Ruta del modelo del VAD si esta descargado.
-    pub fn vad_model(&self) -> Option<PathBuf> {
+    /// Ruta del modelo del VAD si esta descargado. No lo carga: solo mira si esta.
+    pub fn vad_model_path(&self) -> Option<PathBuf> {
         let path = vad::model_path(&self.models_dir);
         path.is_file().then_some(path)
+    }
+
+    /// El modelo del VAD cargado, cargandolo la primera vez que hace falta.
+    ///
+    /// `None` sin modelo descargado, y entonces la captura funciona igual pero sin
+    /// deteccion de voz: obligar a descargar 2 MB antes de poder ver el medidor seria
+    /// poner una puerta donde no hace falta.
+    pub fn vad_model(&self) -> AppResult<Option<VadModel>> {
+        let Some(path) = self.vad_model_path() else {
+            return Ok(None);
+        };
+
+        let mut slot = self
+            .vad
+            .lock()
+            .map_err(|err| AppError::Poisoned(err.to_string()))?;
+
+        if slot.is_none() {
+            let empezo = std::time::Instant::now();
+            *slot = Some(VadModel::load(&path)?);
+            log::info!("modelo del VAD cargado en {} ms", empezo.elapsed().as_millis());
+        }
+
+        Ok(slot.clone())
     }
 
     pub fn stop_capture(&self, source: Source) -> AppResult<()> {

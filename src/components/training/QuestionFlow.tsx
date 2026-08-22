@@ -53,7 +53,16 @@ function motivo(reason: AnswerReviewReason): string {
 }
 
 type Fase =
+  /** Esperando, con el avance automático armado. */
   | { readonly tipo: 'respondiendo' }
+  /**
+   * Esperando, con el avance automático **desarmado a mano**.
+   *
+   * Existe desde el 2026-08-22 y es lo que distingue "todavía no toca avanzar" de "no
+   * avances". Sin esa distinción, el rearme automático de más abajo pisaría el botón de
+   * "Quedarme" un segundo después de pulsarlo.
+   */
+  | { readonly tipo: 'quieto' }
   | { readonly tipo: 'avanzando'; readonly quedan: number }
   /** Se ha parado a enseñar la respuesta porque se parece a las que salieron mal. */
   | { readonly tipo: 'revisando'; readonly review: AnswerReview }
@@ -97,8 +106,22 @@ export function QuestionFlow({ questions, onAnswer, onExit, showHints = true }: 
 
   const recibirDictado = useCallback((trozo: string) => {
     setText((previo) => [previo, trozo].filter(Boolean).join(' '));
-    // Hablar cancela la cuenta atrás y la vuelve a empezar desde cero: si sigues, sigue.
-    setFase({ tipo: 'avanzando', quedan: SEGUNDOS_PARA_AVANZAR });
+
+    // Hablar rearma la cuenta desde cero: si sigues, sigue. Pero **solo desde las fases que
+    // están esperando**, y esto no es una precaución teórica:
+    //
+    // - desde `revisando`, un trozo que llega tarde relanzaría la cuenta y guardaría sola
+    //   la respuesta que se acaba de marcar como sospechosa, saltándose la confirmación;
+    // - desde `guardando`, devolvería el botón a activo con un guardado en vuelo, y dos
+    //   clics guardarían la misma respuesta dos veces.
+    //
+    // La transcripción llega con 3,5 s de retraso (§4.7), así que "un trozo que llega tarde"
+    // es el caso normal, no el raro.
+    setFase((actual) =>
+      actual.tipo === 'respondiendo' || actual.tipo === 'avanzando' || actual.tipo === 'quieto'
+        ? { tipo: 'avanzando', quedan: SEGUNDOS_PARA_AVANZAR }
+        : actual,
+    );
   }, []);
 
   const dictado = useDictation(recibirDictado);
@@ -129,7 +152,7 @@ export function QuestionFlow({ questions, onAnswer, onExit, showHints = true }: 
   const guardar = useCallback(() => {
     const respuesta = text.trim();
     if (respuesta === '' || question === undefined) {
-      setFase({ tipo: 'respondiendo' });
+      setFase({ tipo: 'quieto' });
       return;
     }
 
@@ -139,8 +162,12 @@ export function QuestionFlow({ questions, onAnswer, onExit, showHints = true }: 
         irA(index + 1);
       })
       .catch((cause: unknown) => {
+        // A `quieto` y no a `respondiendo`, y esto lo trajo el rearme automático: volver a
+        // la fase armada relanzaría la cuenta, que volvería a intentar guardar, que volvería
+        // a fallar. Un reintento cada dos segundos contra un error que no se arregla solo, y
+        // con el mensaje parpadeando encima.
         setError(cause instanceof Error ? cause.message : String(cause));
-        setFase({ tipo: 'respondiendo' });
+        setFase({ tipo: 'quieto' });
       });
   }, [text, question, onAnswer, index, irA]);
 
@@ -155,9 +182,10 @@ export function QuestionFlow({ questions, onAnswer, onExit, showHints = true }: 
   const guardarYSeguir = useCallback(() => {
     const respuesta = text.trim();
     // Sin nada que guardar no se avanza: pasa si el micrófono se abrió y no se dijo nada
-    // inteligible. Volver a "respondiendo" evita quedarse con una cuenta atrás a cero.
+    // inteligible. Se vuelve a `quieto` y no a `respondiendo` para no rearmar la cuenta y
+    // volver a caer aquí cada dos segundos.
     if (respuesta === '' || question === undefined) {
-      setFase({ tipo: 'respondiendo' });
+      setFase({ tipo: 'quieto' });
       return;
     }
 
@@ -171,9 +199,10 @@ export function QuestionFlow({ questions, onAnswer, onExit, showHints = true }: 
       })
       .catch((cause: unknown) => {
         // Si la revisión falla, se para igual. Guardar a ciegas porque la comprobación no
-        // contestó sería quitar justamente la red que se acaba de poner.
+        // contestó sería quitar justamente la red que se acaba de poner. Y `quieto`, no
+        // `respondiendo`, para no reintentarlo en bucle cada dos segundos.
         setError(cause instanceof Error ? cause.message : String(cause));
-        setFase({ tipo: 'respondiendo' });
+        setFase({ tipo: 'quieto' });
       });
   }, [text, question, guardar]);
 
@@ -206,6 +235,20 @@ export function QuestionFlow({ questions, onAnswer, onExit, showHints = true }: 
    */
   const ocupado = dictado.speaking || dictado.pending > 0;
 
+  /**
+   * Cuando se queda todo quieto y hay algo escrito, la cuenta vuelve a armarse.
+   *
+   * Sin esto la pantalla se queda colgada, y el camino no es raro: basta con que el VAD
+   * abra un turno por una tos o un golpe en la mesa. La cuenta se para —bien—, el turno lo
+   * tira la duración mínima de §4.5 —bien—, pero entonces **no llega ningún texto**, y el
+   * único sitio que rearmaba la cuenta era la llegada de texto. Se quedaba esperando para
+   * siempre con la respuesta entera en pantalla.
+   */
+  useEffect(() => {
+    if (fase.tipo !== 'respondiendo' || ocupado || text.trim() === '') return;
+    setFase({ tipo: 'avanzando', quedan: SEGUNDOS_PARA_AVANZAR });
+  }, [fase.tipo, ocupado, text]);
+
   // La cuenta atrás. Se rehace entera cada segundo para que la pantalla la enseñe.
   useEffect(() => {
     if (fase.tipo !== 'avanzando') return undefined;
@@ -223,6 +266,10 @@ export function QuestionFlow({ questions, onAnswer, onExit, showHints = true }: 
     }
 
     if (fase.quedan <= 0) {
+      // Se sale de `avanzando` **antes** de llamar, no después. `guardarYSeguir` pregunta al
+      // backend y tarda; si la fase siguiera aquí durante esa espera, cualquier cambio de
+      // `ocupado` volvería a ejecutar este efecto y la comprobación saldría dos veces.
+      setFase({ tipo: 'guardando' });
       guardarYSeguir();
       return undefined;
     }
@@ -247,8 +294,11 @@ export function QuestionFlow({ questions, onAnswer, onExit, showHints = true }: 
     };
   }, [onExit, guardarYSeguir]);
 
+  /** Escribir a mano o pedir quedarse desarma el avance hasta que se vuelva a hablar. */
   const cancelarCuenta = useCallback(() => {
-    setFase((actual) => (actual.tipo === 'avanzando' ? { tipo: 'respondiendo' } : actual));
+    setFase((actual) =>
+      actual.tipo === 'avanzando' || actual.tipo === 'respondiendo' ? { tipo: 'quieto' } : actual,
+    );
   }, []);
 
   if (fase.tipo === 'fin' || question === undefined) {
@@ -374,7 +424,7 @@ export function QuestionFlow({ questions, onAnswer, onExit, showHints = true }: 
         </p>
       )}
 
-      {fase.tipo === 'respondiendo' && ocupado && text !== '' && (
+      {(fase.tipo === 'respondiendo' || fase.tipo === 'quieto') && ocupado && text !== '' && (
         <p className="muted small">
           {dictado.pending > 0
             ? 'Esperando al resto de lo que has dicho antes de contar para avanzar.'
@@ -386,7 +436,9 @@ export function QuestionFlow({ questions, onAnswer, onExit, showHints = true }: 
         <button
           type="button"
           className="btn"
-          disabled={text.trim() === '' || fase.tipo === 'guardando' || fase.tipo === 'revisando'}
+          disabled={
+            text.trim() === '' || fase.tipo === 'guardando' || fase.tipo === 'revisando'
+          }
           onClick={guardarYSeguir}
         >
           {fase.tipo === 'guardando' ? 'Guardando…' : 'Guardar y siguiente'}

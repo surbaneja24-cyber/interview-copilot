@@ -19,6 +19,8 @@
 //! de la oferta llega despues: un banco fijo funciona sin modelo, sin red y sin latencia, y
 //! es lo que permite entrenar en un portatil que no mueve un 3B.
 
+#[cfg(test)]
+mod campo;
 pub mod classifier;
 #[cfg(test)]
 mod corpus;

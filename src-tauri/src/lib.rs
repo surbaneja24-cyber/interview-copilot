@@ -184,6 +184,19 @@ async fn save_prepared_answer(
         ));
     }
 
+    // Contestar otra vez la misma pregunta **sustituye**. Sin esto se acumulan, y las dos
+    // versiones compiten en la recuperacion: el 2026-08-22 quedaron indexadas a la vez la
+    // respuesta cortada a "cuentame un poco sobre ti" —nueve palabras— y la buena de
+    // cuarenta y seis. Rehacer una respuesta mala dejaba la mala dentro.
+    for previa in state
+        .db
+        .list_candidate_documents(Some(DocumentKind::PreparedAnswers))?
+        .iter()
+        .filter(|document| document.title == question)
+    {
+        state.db.delete_document(previa.id)?;
+    }
+
     let embedder = state.embedder()?;
     let new = NewDocument {
         project_id: None,

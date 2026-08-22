@@ -332,6 +332,13 @@ se borraron el 2026-08-22, comprobando que los trozos del CV siguen a la misma d
 - [ ] **(c) Frases enteras mal reconocidas** ("¡Aguien es bien!"). Es el único de los tres
       **sin causa**: `base` da 0,089 de WER sobre voz limpia (§4.4) y la distancia con lo
       real no la explica el modelo. Bloqueado hasta medir el nivel del micrófono hablando
+- [x] **Contestar otra vez una pregunta sustituye la respuesta, no la duplica.** Sin esto se
+      indexaban las dos y competían: el 22-08 convivieron la respuesta cortada a "cuéntame un
+      poco sobre ti" —nueve palabras— y la buena de cuarenta y seis
+- [x] **El filtro, recalibrado con respuestas de verdad** (21 dictadas de principio a fin, en
+      `training/campo.rs`): **caza las 3 rotas y no marca ninguna de las 18 buenas**. La regla
+      de "empieza en minúscula" marcaba 6 de 18 y se ha quitado; whisper deja en minúscula el
+      arranque de muchos turnos sanos
 - [x] **El modo diapositiva ya no guarda sin confirmar** una respuesta corta o sospechosa
       (`ARCHITECTURE.md` §5.3). Cuatro reglas sacadas de comparar las ocho envenenadas con el
       corpus de referencia: **cazan 7 de las 8 y ninguna de las 6 buenas**, que es el control

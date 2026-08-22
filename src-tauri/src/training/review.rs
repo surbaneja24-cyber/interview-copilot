@@ -34,21 +34,23 @@ use crate::error::AppResult;
 
 /// Palabras por debajo de las cuales una respuesta se mira antes de guardarla.
 ///
-/// Sale de los dos corpus, igual que `MIN_TURN_MS`:
+/// **Recalibrado el 2026-08-22 con respuestas de verdad**, que es la primera vez que las hay.
+/// Salio a 10 de los dos corpus de laboratorio; con las veintiuna que Santiago dicto de
+/// principio a fin, los dos extremos se mueven:
 ///
-/// - la respuesta correcta mas corta del corpus de referencia tiene **13 palabras**;
-/// - la respuesta envenenada mas larga de las que se pueden cazar por longitud —"y se un
-///   sistema de inventario para empresas."— tiene **8**.
+/// - la respuesta buena mas corta sigue teniendo **13 palabras**. Las dos fuentes coinciden,
+///   y eso es mas de lo que se podia pedir de un corpus sintetico de seis frases;
+/// - la respuesta rota mas larga ya no tiene 8 sino **10** — "Ahora mismo. un sistema de
+///   bastantes sistema buenos. y bueno" —, que con el umbral viejo pasaba justo por debajo.
 ///
-/// Diez es la media geometrica de 8 y 13: igual de lejos de los dos medida en veces y no en
-/// palabras, que es lo que corresponde cuando los dos extremos vienen de corpus pequenos.
+/// Once es la media geometrica de 10 y 13, la misma regla que `MIN_TURN_MS`: igual de lejos
+/// de los dos medida en veces y no en palabras.
 ///
-/// **Lo que este numero todavia no sabe.** En el corpus de referencia no hay ni una respuesta
-/// legitimamente corta, porque no hay preguntas de `Logistics`: "¿cual es tu disponibilidad?"
-/// se contesta de verdad en seis palabras. Cuando las haya, el suelo hay que volver a
-/// medirlo. Mientras tanto el error cae del lado barato: esa respuesta se marca y se guarda
-/// con un clic.
-const MIN_WORDS: usize = 10;
+/// La preocupacion que quedaba anotada aqui —"no hay ni una respuesta legitimamente corta en
+/// el corpus"— ya tiene respuesta, y no era la que se temia. Las dos preguntas de
+/// `Logistics` se contestaron en 54 y 21 palabras, muy por encima del suelo. Nadie contesta
+/// una entrevista en seis palabras aunque la pregunta lo permita.
+const MIN_WORDS: usize = 11;
 
 /// Lo que hace sospechar de una respuesta. Sin texto para el usuario: eso es de la UI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -77,12 +79,17 @@ pub struct AnswerReview {
 /// Conjunciones y enlaces con los que **no** empieza una respuesta que empiece por el
 /// principio.
 ///
-/// Sale de dos de las ocho: "y se un sistema…" y "Y de ultimo lejos se voy…". La segunda
-/// lleva mayuscula, asi que mirar solo la caja de la primera letra no habria bastado —
-/// whisper pone mayuscula al empezar aunque lo que oye empiece a media frase.
+/// Sale de dos de las ocho envenenadas: "y se un sistema…" y "Y de ultimo lejos se voy…". La
+/// segunda lleva mayuscula, asi que mirar la caja de la primera letra no basta — whisper pone
+/// mayuscula al empezar aunque lo que oye empiece a media frase.
+///
+/// **`porque` y `pues` estaban aqui y se han quitado el 2026-08-22.** Con respuestas reales
+/// delante marcaban dos buenas de dos: contestar "¿por que deberiamos contratarte?" con
+/// "porque considero que…" no es empezar a media frase, es contestar la pregunta que te han
+/// hecho.
 const ENLACES: &[&str] = &[
-    "y", "e", "o", "u", "ni", "que", "pero", "porque", "pues", "aunque", "sino", "entonces",
-    "asi", "además", "ademas", "también", "tambien",
+    "y", "e", "o", "u", "ni", "que", "pero", "aunque", "sino", "entonces", "asi", "además",
+    "ademas", "también", "tambien",
 ];
 
 /// Marcas de no-habla que pone whisper cuando no hay voz que transcribir.
@@ -134,12 +141,18 @@ fn empieza_a_media_frase(texto: &str) -> bool {
         return false;
     }
 
-    // Minuscula al empezar: whisper pone mayuscula, asi que una minuscula aqui es que el
-    // trozo que llego no era el principio.
-    let en_minuscula = limpia.chars().next().is_some_and(char::is_lowercase);
-    let es_enlace = ENLACES.contains(&limpia.to_lowercase().as_str());
-
-    en_minuscula || es_enlace
+    // **Solo la lista, no la minuscula.**
+    //
+    // Habia aqui un "empieza en minuscula" que parecia razonable: whisper pone mayuscula, asi
+    // que una minuscula seria senal de que el trozo que llego no era el principio. Con
+    // respuestas de verdad delante resulto ser falso — whisper deja en minuscula el arranque
+    // de muchos turnos sanos— y marcaba **seis de dieciocho respuestas buenas**: "una vez
+    // cometi un error…", "solo trabajar bastante con…", "de momento tengo disponibilidad…".
+    //
+    // Un aviso que salta una de cada tres veces sin motivo deja de leerse, y entonces el
+    // filtro no existe aunque siga en el codigo. Quitarlo no pierde ninguna de las ocho
+    // envenenadas: las que empezaban a media frase de verdad lo hacen con una conjuncion.
+    ENLACES.contains(&limpia.to_lowercase().as_str())
 }
 
 /// Mira una respuesta y dice si hay que confirmarla antes de guardarla.
@@ -233,6 +246,89 @@ mod tests {
             !cazadas.contains(&LA_QUE_SE_ESCAPA),
             "se caza la que estaba documentada como no cazable: hay que actualizar el limite"
         );
+    }
+
+    /// **El corpus de campo, y es el que manda a partir de ahora.**
+    ///
+    /// Veintiuna respuestas dictadas de principio a fin, sin nadie escribiendolas para medir
+    /// nada. Las tres cifras juntas son el filtro entero: si se cazan las rotas pero se marca
+    /// una de cada tres buenas, el aviso deja de leerse y el filtro no existe.
+    #[test]
+    fn sobre_respuestas_de_verdad() {
+        use crate::training::campo::{Estado, RESPUESTAS};
+
+        let (mut rotas_cazadas, mut rotas, mut falsos, mut usables) = (0, 0, 0, 0);
+
+        for (estado, texto) in RESPUESTAS {
+            let marcada = review(texto).suspicious;
+            match estado {
+                Estado::Rota => {
+                    rotas += 1;
+                    if marcada {
+                        rotas_cazadas += 1;
+                    } else {
+                        println!("  SE ESCAPA  {texto}");
+                    }
+                }
+                Estado::Usable => {
+                    usables += 1;
+                    if marcada {
+                        falsos += 1;
+                        println!("  FALSO POSITIVO ({:?})  {texto}", review(texto).reasons);
+                    }
+                }
+            }
+        }
+
+        println!("rotas cazadas {rotas_cazadas}/{rotas} · falsos positivos {falsos}/{usables}");
+
+        assert_eq!(rotas_cazadas, rotas, "se escapa una respuesta rota");
+        assert_eq!(
+            falsos, 0,
+            "{falsos} de {usables} respuestas buenas salen marcadas; un aviso que salta sin \
+             motivo deja de leerse y entonces el filtro no existe aunque siga en el codigo"
+        );
+    }
+
+    /// El umbral de palabras vive en el hueco entre las dos respuestas reales que lo fijan.
+    ///
+    /// Y el limite de abajo no es "la rota mas larga" sino **la rota mas larga que solo la
+    /// longitud puede cazar**. Es una distincion que costo un test en rojo: la rota mas larga
+    /// de las tres tiene veinticinco palabras, pero empieza por "y" y la caza otra regla, asi
+    /// que subir el umbral hasta ahi seria pedirle a la longitud un trabajo que ya esta hecho
+    /// — y de paso marcar media docena de respuestas buenas.
+    #[test]
+    fn el_umbral_de_palabras_cae_entre_las_respuestas_reales() {
+        use crate::training::campo::{Estado, RESPUESTAS};
+
+        let mas_corta_buena = RESPUESTAS
+            .iter()
+            .filter(|(estado, _)| *estado == Estado::Usable)
+            .map(|(_, texto)| palabras(texto))
+            .min()
+            .expect("hay respuestas");
+
+        let solo_por_longitud = RESPUESTAS
+            .iter()
+            .filter(|(estado, _)| *estado == Estado::Rota)
+            .filter(|(_, texto)| {
+                !tiene_marca_de_no_habla(texto)
+                    && !empieza_a_media_frase(texto)
+                    && !tiene_guiones_de_diliogo(texto)
+            })
+            .map(|(_, texto)| palabras(texto))
+            .max()
+            .expect("alguna rota depende solo de la longitud");
+
+        println!(
+            "la buena mas corta tiene {mas_corta_buena} palabras; la rota que solo caza la \
+             longitud, {solo_por_longitud}"
+        );
+
+        assert_eq!(mas_corta_buena, 13, "el corpus de campo ha cambiado");
+        assert_eq!(solo_por_longitud, 10, "el corpus de campo ha cambiado");
+        assert!(MIN_WORDS > solo_por_longitud, "{MIN_WORDS} deja pasar una rota");
+        assert!(MIN_WORDS < mas_corta_buena, "{MIN_WORDS} marca la buena mas corta");
     }
 
     #[test]

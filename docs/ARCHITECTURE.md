@@ -729,11 +729,24 @@ Asi que la cuenta baja a **2 s**, que es lo que devuelve el total a los ~6,1 s q
 constante siempre quiso valer. No es un numero mas corto porque si: es el mismo calculo con
 la medicion que faltaba cuando se escribio.
 
-Bajarla solo es seguro por un segundo cambio, y este si es un arreglo: **volver a hablar
-cancela la cuenta en cuanto el VAD oye voz**, sin esperar al texto. Antes solo la cancelaba el
-texto nuevo, y el texto tarda tres segundos y medio: quien retomaba la frase despues de pensar
-se encontraba con que la pantalla ya habia guardado y pasado de pregunta. Ese fallo ya existia
-con los cuatro segundos; acortar la cuenta sin arreglarlo lo habria hecho frecuente.
+Bajarla solo es seguro por un segundo cambio, y este si es un arreglo: **la cuenta solo corre
+cuando no hay nada en marcha**. Ni voz que el VAD este oyendo, ni audio que whisper todavia no
+haya devuelto. Las dos condiciones dicen lo mismo — que la respuesta en pantalla no esta
+completa — y ninguna lleva numero dentro.
+
+La segunda es la que no se ve a simple vista: entre que alguien se calla y que su texto
+aparece hay 3,7 s en los que **no se oye nada y todavia falta texto por llegar**. Sin mirar la
+cola de turnos pendientes, la cuenta corre justo ahi.
+
+**La primera version de este arreglo estaba mal y duro una hora.** Era un efecto disparado por
+el *cambio* de "hay voz" a cierto. No sirve: con 3,5 s de retraso, el texto de una frase llega
+cuando ya has empezado la siguiente, asi que la senal llevaba rato en cierto, no cambiaba, el
+efecto no se ejecutaba y la cuenta llegaba al final. **Cortaba a mitad de respuesta, que es
+exactamente lo que iba a arreglar.** Se supo por un informe de campo, no por un test — es el
+tercer fallo de frontend de este proyecto que se descubre usando la aplicacion, y los tres han
+sido de lo mismo: cuando corre un efecto, no que calcula.
+
+Mirar el valor de ahora en cada tic, en vez del instante en que cambio, es lo que lo arregla.
 
 ### Y lo que se veia y donde
 

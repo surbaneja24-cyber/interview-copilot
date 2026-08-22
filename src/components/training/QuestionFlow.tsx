@@ -194,21 +194,33 @@ export function QuestionFlow({ questions, onAnswer, onExit, showHints = true }: 
   }, [question, index, irA]);
 
   /**
-   * Volver a hablar para la cuenta **en cuanto se oye**, sin esperar al texto.
+   * Si hay algo en marcha: alguien hablando, o audio que whisper todavía no ha devuelto.
    *
-   * Antes solo la cancelaba el texto nuevo, y el texto tarda unos tres segundos y medio en
-   * llegar: quien retomaba la frase después de pensar se encontraba con que la pantalla ya
-   * había guardado y pasado de pregunta. Es lo que hacía imposible acortar la cuenta, y es
-   * lo que la arregla.
+   * Las dos condiciones tienen el mismo motivo y ninguna lleva número dentro: mientras
+   * cualquiera de ellas sea cierta, **la respuesta que hay en pantalla no está completa**, y
+   * guardarla es archivar media respuesta.
+   *
+   * `pending` es la que no se veía a simple vista. El turno se cierra 700 ms después de
+   * callarse y whisper tarda otros tres segundos (§4.7), así que hay un hueco largo en el
+   * que ya no se oye nada y todavía falta texto por llegar.
    */
-  useEffect(() => {
-    if (!dictado.speaking) return;
-    setFase((actual) => (actual.tipo === 'avanzando' ? { tipo: 'respondiendo' } : actual));
-  }, [dictado.speaking]);
+  const ocupado = dictado.speaking || dictado.pending > 0;
 
   // La cuenta atrás. Se rehace entera cada segundo para que la pantalla la enseñe.
   useEffect(() => {
     if (fase.tipo !== 'avanzando') return undefined;
+
+    // Se mira el valor de **ahora**, en cada tic, y no el momento en que cambió.
+    //
+    // La primera versión de esto era un efecto disparado por el cambio de `speaking`, y no
+    // servía: con 3,5 s de retraso en la transcripción, el texto de una frase llega cuando
+    // ya has empezado la siguiente. `speaking` llevaba rato en `true`, no cambiaba, el
+    // efecto no se ejecutaba y la cuenta corría hasta el final. Cortaba a mitad de
+    // respuesta, que es exactamente lo que fue a arreglar.
+    if (ocupado) {
+      setFase({ tipo: 'respondiendo' });
+      return undefined;
+    }
 
     if (fase.quedan <= 0) {
       guardarYSeguir();
@@ -221,7 +233,7 @@ export function QuestionFlow({ questions, onAnswer, onExit, showHints = true }: 
     return () => {
       window.clearTimeout(id);
     };
-  }, [fase, guardarYSeguir]);
+  }, [fase, guardarYSeguir, ocupado]);
 
   // Teclado: para quien escribe, no tener que apuntar con el ratón es la misma idea.
   useEffect(() => {
@@ -359,6 +371,14 @@ export function QuestionFlow({ questions, onAnswer, onExit, showHints = true }: 
           <button type="button" className="btn btn--ghost" onClick={cancelarCuenta}>
             Quedarme
           </button>
+        </p>
+      )}
+
+      {fase.tipo === 'respondiendo' && ocupado && text !== '' && (
+        <p className="muted small">
+          {dictado.pending > 0
+            ? 'Esperando al resto de lo que has dicho antes de contar para avanzar.'
+            : 'Te sigo oyendo, la cuenta para avanzar está parada.'}
         </p>
       )}
 

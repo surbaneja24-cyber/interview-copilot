@@ -376,7 +376,15 @@ se borraron el 2026-08-22, comprobando que los trozos del CV siguen a la misma d
       no se moja **se cierra**, porque abrir de más da experiencia inventada con cita real y
       eso no se ve
 - [ ] Resolver con el LLM las preguntas en las que las reglas se abstienen
-- [ ] Máquina de estados de la entrevista
+- [x] **Máquina de estados de la entrevista** (`ARCHITECTURE.md` §5.5). Pura, sin audio ni
+      modelo dentro, y probada con eventos escritos a mano. Las dos reglas que no son
+      evidentes: los turnos del entrevistador **se acumulan hasta que el candidato conteste**
+      —nadie pregunta en una sola frase— y que el candidato empiece a hablar **no cancela** la
+      sugerencia
+- [x] **Disparador: qué turno merece una pasada del pipeline.** Conservador a propósito,
+      porque saltarse una pregunta no se compara con gastar una pasada: **descarta 3 de las 7
+      frases que no son preguntas y ninguna de las 32 que sí lo son**
+- [ ] Engancharla al audio y a `llm::answering`
 - [ ] Retrieval especulativo durante las pausas
 - [ ] Prefijo de prompt cacheado
 - [ ] UI de entrevista: transcript, tipo de pregunta, respuesta, key points, follow-ups (§9)

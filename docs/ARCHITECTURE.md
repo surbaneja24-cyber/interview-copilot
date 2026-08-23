@@ -1127,6 +1127,82 @@ sale de que los dos errores no cuestan lo mismo: cerrar de mas da una respuesta 
 documento que dice lo que la empresa pide, la barrera de §5 lo deja pasar porque esa frase si
 esta en los documentos, y sale experiencia inventada con cita real. Eso **no se ve**.
 
+## 5.5 La maquina de estados de la entrevista (2026-08-23)
+
+Las piezas de debajo llevan montadas y medidas desde la Fase 4: captura por dos fuentes, VAD,
+whisper, clasificador, recuperacion con filtro. Lo que faltaba es lo que las conecta, y son
+dos cosas que **pueden equivocarse sin dar error** — que es la definicion que usa el roadmap
+para decidir que lleva tests desde el primer dia.
+
+Las dos estan escritas como `TurnDetector` y por el mismo motivo: sin nada de fuera dentro.
+Ni audio, ni base, ni modelo, ni reloj. Entran eventos, salen ordenes.
+
+### Quien habla se sabe por la fuente
+
+Viene de §4.1 y aqui llega resuelto: el microfono es el candidato, el loopback es el
+entrevistador. Por eso los eventos de uno y otro son **distintos** en vez de llevar un campo
+"quien". Un evento con un campo que hay que mirar siempre es una condicion que alguien se
+olvida de mirar una vez.
+
+### Las dos reglas que no son evidentes
+
+**Los turnos del entrevistador se acumulan hasta que el candidato conteste.**
+
+Nadie pregunta en una sola frase. *"Cuentame un proyecto complicado."* — pausa — *"Y ponme un
+ejemplo con cifras si las tienes."* Son dos turnos para el VAD y **una** pregunta, y contestar
+a la primera mitad es contestar a otra cosa.
+
+Y la frontera no es un temporizador: **es que el candidato hable**. En cuanto contesta, lo
+siguiente que diga el entrevistador es una pregunta nueva. Un temporizador habria habido que
+calibrarlo con grabaciones que no hay; esto no.
+
+**Que el candidato empiece a hablar no cancela la sugerencia.**
+
+Al reves de lo que pide el instinto. Contestar de memoria mientras la sugerencia se prepara es
+lo normal —tarda unos segundos, §4.7— y quitarsela justo cuando aparece seria dejarle solo en
+el unico momento en que la queria.
+
+### El disparador, y hacia donde se equivoca
+
+No todo lo que dice el entrevistador merece una pasada del pipeline. "Vale, perfecto" o "un
+momento que llamo a mi companera" son turnos como cualquier otro para el VAD.
+
+Lo importante es que **el filtro no decide si la respuesta sera correcta**: de eso ya se
+encargan §5 y §6, y estan medidos. Si el turno no era una pregunta, el retriever no encuentra
+material y el modelo contesta que no puede. Lo unico en juego es una pasada desperdiciada, y
+eso decide hacia donde equivocarse: saltarse una pregunta de verdad deja al candidato sin
+ayuda delante del entrevistador; colar un "vale" cuesta unos segundos de CPU. No son
+comparables, asi que el filtro es conservador a proposito.
+
+Medido sobre los dos corpus del clasificador: **descarta 3 de las 7 frases que no son
+preguntas de entrevista y no descarta ninguna de las 32 que si lo son.**
+
+Las cuatro que se cuelan estan escritas con nombre: "¿me oyes bien?", "¿puedes ponerte mas
+cerca del microfono?", "¿que tal el viaje hasta aqui?" y "entonces te llamamos la semana que
+viene, ¿te parece?". Las cuatro son preguntas de verdad; lo que no son es preguntas **de
+entrevista**, y esa distincion no esta en la forma de la frase sino en lo que quiere decir.
+
+### Lo que salio de escribir el primer test
+
+Que **un turno que continua una pregunta no tiene por que parecer una pregunta**. La
+ampliacion mas natural del mundo —"Y ponme un ejemplo con cifras si las tienes"— no lleva
+interrogacion y empieza por "Y": sola no pasa el filtro, y pegada a la anterior es media
+pregunta que se estaba perdiendo. El disparador recibe ahora si hay una pregunta a medias, y
+con ella solo exige el minimo de palabras. Un "vale" sigue sin ampliar nada.
+
+Y una fragilidad que queda anotada: el minimo de palabras es **3**, porque la pregunta mas
+corta del corpus tiene 3 —"¿cuando podrias incorporarte?"— y lo mas largo que hay que
+descartar tiene 2. Entre 2 y 3 no cabe ningun entero, asi que aqui no hay margen que repartir
+como en `MIN_TURN_MS` o `MIN_WORDS`: el umbral esta pegado al borde y un "¿por que?" de dos
+palabras caeria del lado equivocado. Es el mas fragil de los tres umbrales del proyecto.
+
+### Lo que todavia no esta
+
+Engancharla al audio de verdad y a `llm::answering`. Va aparte a proposito: una maquina de
+estados que se estrena ya conectada a un microfono, un modelo y una pantalla no se depura, se
+adivina — y **los cinco fallos de este proyecto que se han encontrado usando la aplicacion en
+vez de con un test han salido todos de ahi**.
+
 ## 6. Protección de captura (§26-33)
 
 Interfaz `CaptureProtection` con `enable` / `disable` / `is_supported` / `get_status`, y tres modos: `OFF`, `EXCLUDE_FROM_CAPTURE`, `MONITOR_ONLY`.

@@ -207,7 +207,10 @@ const PATTERNS: &[Pattern] = &[
 
 /// Baja a minusculas y quita los acentos, para que la clasificacion no dependa de que
 /// whisper los ponga.
-fn normaliza(texto: &str) -> String {
+///
+/// La usa tambien `interview::trigger`, que mira si un turno empieza por un imperativo y se
+/// encuentra con el mismo problema: "cuentame" y "cuéntame" son la misma palabra aqui.
+pub fn sin_acentos(texto: &str) -> String {
     texto
         .to_lowercase()
         .chars()
@@ -224,7 +227,7 @@ fn normaliza(texto: &str) -> String {
 
 /// Mira una pregunta y dice de que tipo es, o que no se moja.
 pub fn classify(question: &str) -> Classification {
-    let texto = normaliza(question);
+    let texto = sin_acentos(question);
 
     // Seis contadores, uno por clase. Un array y no un mapa: son seis y estan fijas.
     let mut puntos = [0usize; 6];
@@ -405,10 +408,10 @@ mod tests {
     #[test]
     fn los_acentos_no_cambian_la_clasificacion() {
         for (pregunta, _) in EVALUACION {
-            let sin_acentos = normaliza(pregunta);
+            let sin_tildes = sin_acentos(pregunta);
             assert_eq!(
                 classify(pregunta).kind,
-                classify(&sin_acentos).kind,
+                classify(&sin_tildes).kind,
                 "\"{pregunta}\" cambia de tipo al perder los acentos"
             );
         }

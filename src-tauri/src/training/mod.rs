@@ -23,7 +23,7 @@
 mod campo;
 pub mod classifier;
 #[cfg(test)]
-mod corpus;
+pub(crate) mod corpus;
 pub mod review;
 
 use serde::Serialize;

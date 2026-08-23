@@ -3,6 +3,7 @@ mod download;
 pub mod embedding;
 mod error;
 mod hardware;
+pub mod interview;
 mod llm;
 mod platform;
 mod rag;

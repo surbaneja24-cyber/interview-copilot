@@ -440,10 +440,30 @@ MVP.
 
 ## Política de tests
 
-No hay tests de UI hasta la Fase 8. Sí desde el primer día en: chunking, retrieval y
-umbrales, clasificador de preguntas, parseo de respuestas del LLM, migraciones de base de
-datos y detección de hardware. Es la parte donde un fallo silencioso pasa desapercibido y
-degrada las respuestas sin que nadie se entere.
+Sí desde el primer día en: chunking, retrieval y umbrales, clasificador de preguntas, parseo
+de respuestas del LLM, migraciones de base de datos y detección de hardware. Es la parte donde
+un fallo silencioso pasa desapercibido y degrada las respuestas sin que nadie se entere.
+
+**Y desde el 2026-08-23, también en el frontend**, aunque la regla original decía de esperar a
+la Fase 8. No fue un cambio de opinión: fue una lista. El modo diapositiva acumuló **cinco
+fallos encontrados usándolo o releyéndolo, ninguno con un test**, y los cinco eran de cuándo
+corría un efecto y no de qué se calculaba. Un `setInterval` huérfano que escribía en la
+pregunta siguiente, un contador puesto en la pantalla equivocada, una cancelación disparada
+por el cambio de una señal que llevaba rato sin cambiar, un trozo tardío que se saltaba la
+confirmación, y una cuenta atrás que se quedaba parada para siempre tras una tos.
+
+Lo que se prueba **no es la pantalla, es la máquina**: `components/training/flujo.ts` es una
+función pura —fase, acción y contexto entran, fase sale— y el componente solo obedece. Con eso
+los cinco fallos son casos de prueba de tres líneas, y hay 21. Se comprobaron rompiendo dos
+reglas a propósito antes de darlos por buenos: siete tests en rojo, y los siete de los casos
+que describen fallos reales. `npm test`.
+
+La regla que salió de todo esto y que gobierna ese fichero: **las decisiones se toman con el
+valor de ahora, no con el instante en que algo cambió.** Tres de los cinco fallos son esa
+frase incumplida.
+
+Sigue sin haber tests de pantalla —renderizado, clics, accesibilidad—, y eso sí espera a la
+Fase 8.
 
 Las migraciones se prueban **sobre una base que ya existe**, no solo creando una nueva: una
 base en v2 con proyectos, documentos y trozos dentro tiene que llegar a v3 con todo, y

@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useDictation } from '@/hooks/useDictation';
 import { reviewAnswer } from '@/ipc/commands';
-import type { AnswerReview, AnswerReviewReason, TrainingStatus } from '@/ipc/types';
+import { SEGUNDOS_PARA_AVANZAR, siguienteFase } from '@/components/training/flujo';
+import type { Accion, Contexto, Fase } from '@/components/training/flujo';
+import type { AnswerReviewReason, TrainingStatus } from '@/ipc/types';
 
 interface Props {
   readonly questions: readonly TrainingStatus[];
@@ -12,26 +14,8 @@ interface Props {
   readonly showHints?: boolean;
 }
 
-/**
- * Segundos de silencio, ya con el texto en pantalla, antes de pasar a la siguiente.
- *
- * No se avanza al cerrarse el turno del VAD: ese cierre son 700 ms de silencio, que
- * significan "he terminado la frase" y no "he terminado la respuesta". Lo que se busca es
- * que hagan falta **unos seis segundos callado** para que avance, porque eso ya es una
- * intención y no una pausa para pensar.
- *
- * Eran cuatro segundos, y esa cuenta se apoyaba en una estimación: "lo que tarda whisper
- * (~2 s aquí)". Medido el 2026-08-22 (§4.7), tarda entre 2,4 y 3,8 s, y encima casi
- * independientemente de lo que dure el turno. Con el cierre del VAD y el sondeo, el total
- * real eran unos ocho segundos, no seis. Bajar a dos devuelve la cuenta a lo que siempre
- * quiso ser:
- *
- *     0,7 s de cierre del VAD + ~3,0 s de whisper + 0,4 s de sondeo + 2 s = ~6,1 s
- *
- * El número no se ha elegido más corto porque sí: se ha recalculado con la medición que
- * faltaba cuando se puso.
- */
-const SEGUNDOS_PARA_AVANZAR = 2;
+/** Cada cuánto avanza el reloj de la máquina. Es su única fuente de tiempo. */
+const TIC_MS = 1000;
 
 /**
  * Por qué se ha parado, en una frase.
@@ -52,42 +36,25 @@ function motivo(reason: AnswerReviewReason): string {
   }
 }
 
-type Fase =
-  /** Esperando, con el avance automático armado. */
-  | { readonly tipo: 'respondiendo' }
-  /**
-   * Esperando, con el avance automático **desarmado a mano**.
-   *
-   * Existe desde el 2026-08-22 y es lo que distingue "todavía no toca avanzar" de "no
-   * avances". Sin esa distinción, el rearme automático de más abajo pisaría el botón de
-   * "Quedarme" un segundo después de pulsarlo.
-   */
-  | { readonly tipo: 'quieto' }
-  | { readonly tipo: 'avanzando'; readonly quedan: number }
-  /** Se ha parado a enseñar la respuesta porque se parece a las que salieron mal. */
-  | { readonly tipo: 'revisando'; readonly review: AnswerReview }
-  | { readonly tipo: 'guardando' }
-  | { readonly tipo: 'fin' };
-
 /**
  * Las preguntas de una en una, a pantalla completa, avanzando solas.
  *
  * El objetivo es quitar fricción: contestar veinte preguntas no puede costar veinte
  * decisiones sobre cuál toca ahora, ni veinte clics para abrir el micrófono. Se entra y se
- * habla. Por eso:
+ * habla.
  *
- * - Empieza por la primera sin contestar, sin preguntar nada.
- * - El micrófono se abre solo en cada pregunta.
- * - Cuando dejas de hablar del todo, avanza sola —con la cuenta a la vista y cancelable—.
- * - Y aun así se ve lo transcrito antes de guardarlo, porque una respuesta mal transcrita
- *   se queda en el material de todas las entrevistas siguientes.
+ * **Aquí no vive ninguna regla.** Cuándo se avanza, cuándo se para y qué hace un trozo de
+ * transcripción que llega tarde están en `flujo.ts`, que es una función pura con tests. Esta
+ * pantalla solo obedece: dibuja, llama a `tic` una vez por segundo, pide la revisión cuando
+ * la máquina lo pide y guarda cuando lo pide.
  *
- * Lo último dejó de ser suficiente el 2026-08-21: verlo pasar no es verlo. Ocho respuestas
- * inservibles se archivaron solas mientras la pantalla las enseñaba. Desde el 22-08 la
- * respuesta pasa por `reviewAnswer` antes de guardarse y, si se parece a las que salieron
- * mal, la cuenta atrás se para y hay que decidir. **Solo entonces**: una respuesta normal
- * sigue guardándose sola, que es el motivo de que este modo exista. El filtro caza siete de
- * las ocho envenenadas y ninguna de las buenas del corpus.
+ * Esa separación se paga sola. Los cinco fallos que ha tenido esta pantalla se encontraron
+ * usándola o releyéndola, ninguno con un test, y los cinco eran de cuándo corría un efecto.
+ *
+ * Lo que sí sigue aquí, porque es de producto y no de estados: una respuesta pasa por
+ * `reviewAnswer` antes de guardarse, y si se parece a las que salieron mal hay que decidir.
+ * **Solo entonces**: una respuesta normal se sigue guardando sola, que es el motivo de que
+ * este modo exista.
  */
 export function QuestionFlow({ questions, onAnswer, onExit, showHints = true }: Props) {
   const primeraSinContestar = Math.max(
@@ -104,28 +71,42 @@ export function QuestionFlow({ questions, onAnswer, onExit, showHints = true }: 
 
   const question = questions[index];
 
-  const recibirDictado = useCallback((trozo: string) => {
-    setText((previo) => [previo, trozo].filter(Boolean).join(' '));
+  const ocupadoRef = useRef(false);
+  const textoRef = useRef('');
+  textoRef.current = text;
 
-    // Hablar rearma la cuenta desde cero: si sigues, sigue. Pero **solo desde las fases que
-    // están esperando**, y esto no es una precaución teórica:
-    //
-    // - desde `revisando`, un trozo que llega tarde relanzaría la cuenta y guardaría sola
-    //   la respuesta que se acaba de marcar como sospechosa, saltándose la confirmación;
-    // - desde `guardando`, devolvería el botón a activo con un guardado en vuelo, y dos
-    //   clics guardarían la misma respuesta dos veces.
-    //
-    // La transcripción llega con 3,5 s de retraso (§4.7), así que "un trozo que llega tarde"
-    // es el caso normal, no el raro.
-    setFase((actual) =>
-      actual.tipo === 'respondiendo' || actual.tipo === 'avanzando' || actual.tipo === 'quieto'
-        ? { tipo: 'avanzando', quedan: SEGUNDOS_PARA_AVANZAR }
-        : actual,
-    );
+  /**
+   * Manda una acción a la máquina con el contexto **de ahora**.
+   *
+   * Por referencia y no por dependencia: si el contexto entrara como dependencia de los
+   * `useCallback`, cada tic recrearía los manejadores y el temporizador. Y sobre todo, leerlo
+   * en el momento del despacho es lo que garantiza que se decide con el valor actual, que es
+   * de donde salieron tres de los cinco fallos de esta pantalla.
+   */
+  const despachar = useCallback((accion: Accion) => {
+    const ctx: Contexto = {
+      ocupado: ocupadoRef.current,
+      hayTexto: textoRef.current.trim() !== '',
+    };
+    setFase((actual) => siguienteFase(actual, accion, ctx));
   }, []);
+
+  const recibirDictado = useCallback(
+    (trozo: string) => {
+      setText((previo) => {
+        const unido = [previo, trozo].filter(Boolean).join(' ');
+        textoRef.current = unido;
+        return unido;
+      });
+      despachar({ tipo: 'dictado' });
+    },
+    [despachar],
+  );
 
   const dictado = useDictation(recibirDictado);
   const { start, stop, dictating } = dictado;
+  const ocupado = dictado.speaking || dictado.pending > 0;
+  ocupadoRef.current = ocupado;
 
   // Micrófono abierto en cada pregunta, sin pedirlo. Es el clic que más se repetía.
   useEffect(() => {
@@ -133,86 +114,74 @@ export function QuestionFlow({ questions, onAnswer, onExit, showHints = true }: 
     return stop;
   }, [index, start, stop]);
 
+  // El reloj. Uno solo y siempre el mismo: la máquina decide qué hacer con cada tic.
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      despachar({ tipo: 'tic' });
+    }, TIC_MS);
+    return () => {
+      window.clearInterval(id);
+    };
+  }, [despachar]);
+
   const irA = useCallback(
     (siguiente: number) => {
       stop();
       setText('');
+      textoRef.current = '';
       setError(null);
       if (siguiente >= questions.length) {
-        setFase({ tipo: 'fin' });
+        despachar({ tipo: 'terminar' });
       } else {
         setIndex(siguiente);
-        setFase({ tipo: 'respondiendo' });
+        despachar({ tipo: 'reiniciar' });
       }
     },
-    [questions.length, stop],
+    [questions.length, stop, despachar],
   );
 
-  /** Guarda sin más preguntas. Es a lo que lleva el botón de la revisión. */
-  const guardar = useCallback(() => {
-    const respuesta = text.trim();
-    if (respuesta === '' || question === undefined) {
-      setFase({ tipo: 'quieto' });
-      return;
-    }
+  // Comprobar la respuesta. La máquina pide entrar aquí; esto obedece y contesta.
+  useEffect(() => {
+    if (fase.tipo !== 'comprobando') return;
 
-    setFase({ tipo: 'guardando' });
-    onAnswer(question, respuesta)
+    reviewAnswer(textoRef.current.trim())
+      .then((review) => {
+        despachar(review.suspicious ? { tipo: 'sospechosa', review } : { tipo: 'limpia' });
+      })
+      .catch((cause: unknown) => {
+        // Guardar a ciegas porque la comprobación no contestó sería quitar justamente la red
+        // que se acaba de poner.
+        setError(cause instanceof Error ? cause.message : String(cause));
+        despachar({ tipo: 'fallo' });
+      });
+  }, [fase.tipo, despachar]);
+
+  // Guardar. Igual: la máquina lo pide, esto lo hace.
+  const guardando = useRef(false);
+  useEffect(() => {
+    if (fase.tipo !== 'guardando' || question === undefined || guardando.current) return;
+    guardando.current = true;
+
+    onAnswer(question, textoRef.current.trim())
       .then(() => {
         irA(index + 1);
       })
       .catch((cause: unknown) => {
-        // A `quieto` y no a `respondiendo`, y esto lo trajo el rearme automático: volver a
-        // la fase armada relanzaría la cuenta, que volvería a intentar guardar, que volvería
-        // a fallar. Un reintento cada dos segundos contra un error que no se arregla solo, y
-        // con el mensaje parpadeando encima.
         setError(cause instanceof Error ? cause.message : String(cause));
-        setFase({ tipo: 'quieto' });
-      });
-  }, [text, question, onAnswer, index, irA]);
-
-  /**
-   * El camino normal: mirar la respuesta y, solo si se parece a las que salieron mal,
-   * pararse a preguntar.
-   *
-   * Pasa por aquí tanto la cuenta atrás como el botón de guardar. El botón también, porque
-   * una respuesta envenenada guardada por un clic impaciente envenena igual, y la
-   * confirmación es una sola.
-   */
-  const guardarYSeguir = useCallback(() => {
-    const respuesta = text.trim();
-    // Sin nada que guardar no se avanza: pasa si el micrófono se abrió y no se dijo nada
-    // inteligible. Se vuelve a `quieto` y no a `respondiendo` para no rearmar la cuenta y
-    // volver a caer aquí cada dos segundos.
-    if (respuesta === '' || question === undefined) {
-      setFase({ tipo: 'quieto' });
-      return;
-    }
-
-    reviewAnswer(respuesta)
-      .then((review) => {
-        if (review.suspicious) {
-          setFase({ tipo: 'revisando', review });
-        } else {
-          guardar();
-        }
+        despachar({ tipo: 'fallo' });
       })
-      .catch((cause: unknown) => {
-        // Si la revisión falla, se para igual. Guardar a ciegas porque la comprobación no
-        // contestó sería quitar justamente la red que se acaba de poner. Y `quieto`, no
-        // `respondiendo`, para no reintentarlo en bucle cada dos segundos.
-        setError(cause instanceof Error ? cause.message : String(cause));
-        setFase({ tipo: 'quieto' });
+      .finally(() => {
+        guardando.current = false;
       });
-  }, [text, question, guardar]);
+  }, [fase.tipo, question, onAnswer, index, irA, despachar]);
 
-  /** Borra lo transcrito y vuelve a escuchar, sin tocar de pregunta. */
   const repetir = useCallback(() => {
     setText('');
+    textoRef.current = '';
     setError(null);
-    setFase({ tipo: 'respondiendo' });
+    despachar({ tipo: 'repetir' });
     caja.current?.focus();
-  }, []);
+  }, [despachar]);
 
   const saltar = useCallback(() => {
     if (question !== undefined) {
@@ -222,84 +191,29 @@ export function QuestionFlow({ questions, onAnswer, onExit, showHints = true }: 
     irA(index + 1);
   }, [question, index, irA]);
 
-  /**
-   * Si hay algo en marcha: alguien hablando, o audio que whisper todavía no ha devuelto.
-   *
-   * Las dos condiciones tienen el mismo motivo y ninguna lleva número dentro: mientras
-   * cualquiera de ellas sea cierta, **la respuesta que hay en pantalla no está completa**, y
-   * guardarla es archivar media respuesta.
-   *
-   * `pending` es la que no se veía a simple vista. El turno se cierra 700 ms después de
-   * callarse y whisper tarda otros tres segundos (§4.7), así que hay un hueco largo en el
-   * que ya no se oye nada y todavía falta texto por llegar.
-   */
-  const ocupado = dictado.speaking || dictado.pending > 0;
+  const guardar = useCallback(() => {
+    despachar({ tipo: 'guardar' });
+  }, [despachar]);
 
-  /**
-   * Cuando se queda todo quieto y hay algo escrito, la cuenta vuelve a armarse.
-   *
-   * Sin esto la pantalla se queda colgada, y el camino no es raro: basta con que el VAD
-   * abra un turno por una tos o un golpe en la mesa. La cuenta se para —bien—, el turno lo
-   * tira la duración mínima de §4.5 —bien—, pero entonces **no llega ningún texto**, y el
-   * único sitio que rearmaba la cuenta era la llegada de texto. Se quedaba esperando para
-   * siempre con la respuesta entera en pantalla.
-   */
-  useEffect(() => {
-    if (fase.tipo !== 'respondiendo' || ocupado || text.trim() === '') return;
-    setFase({ tipo: 'avanzando', quedan: SEGUNDOS_PARA_AVANZAR });
-  }, [fase.tipo, ocupado, text]);
+  const quedarme = useCallback(() => {
+    despachar({ tipo: 'aMano' });
+  }, [despachar]);
 
-  // La cuenta atrás. Se rehace entera cada segundo para que la pantalla la enseñe.
-  useEffect(() => {
-    if (fase.tipo !== 'avanzando') return undefined;
-
-    // Se mira el valor de **ahora**, en cada tic, y no el momento en que cambió.
-    //
-    // La primera versión de esto era un efecto disparado por el cambio de `speaking`, y no
-    // servía: con 3,5 s de retraso en la transcripción, el texto de una frase llega cuando
-    // ya has empezado la siguiente. `speaking` llevaba rato en `true`, no cambiaba, el
-    // efecto no se ejecutaba y la cuenta corría hasta el final. Cortaba a mitad de
-    // respuesta, que es exactamente lo que fue a arreglar.
-    if (ocupado) {
-      setFase({ tipo: 'respondiendo' });
-      return undefined;
-    }
-
-    if (fase.quedan <= 0) {
-      // Se sale de `avanzando` **antes** de llamar, no después. `guardarYSeguir` pregunta al
-      // backend y tarda; si la fase siguiera aquí durante esa espera, cualquier cambio de
-      // `ocupado` volvería a ejecutar este efecto y la comprobación saldría dos veces.
-      setFase({ tipo: 'guardando' });
-      guardarYSeguir();
-      return undefined;
-    }
-
-    const id = window.setTimeout(() => {
-      setFase({ tipo: 'avanzando', quedan: fase.quedan - 1 });
-    }, 1000);
-    return () => {
-      window.clearTimeout(id);
-    };
-  }, [fase, guardarYSeguir, ocupado]);
+  const guardarIgual = useCallback(() => {
+    despachar({ tipo: 'limpia' });
+  }, [despachar]);
 
   // Teclado: para quien escribe, no tener que apuntar con el ratón es la misma idea.
   useEffect(() => {
     const alPulsar = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onExit();
-      if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) guardarYSeguir();
+      if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) guardar();
     };
     window.addEventListener('keydown', alPulsar);
     return () => {
       window.removeEventListener('keydown', alPulsar);
     };
-  }, [onExit, guardarYSeguir]);
-
-  /** Escribir a mano o pedir quedarse desarma el avance hasta que se vuelva a hablar. */
-  const cancelarCuenta = useCallback(() => {
-    setFase((actual) =>
-      actual.tipo === 'avanzando' || actual.tipo === 'respondiendo' ? { tipo: 'quieto' } : actual,
-    );
-  }, []);
+  }, [onExit, guardar]);
 
   if (fase.tipo === 'fin' || question === undefined) {
     const contestadas = questions.filter((q) => q.answer !== null).length;
@@ -329,6 +243,7 @@ export function QuestionFlow({ questions, onAnswer, onExit, showHints = true }: 
   }
 
   const hechas = questions.filter((q) => q.answer !== null).length;
+  const esperandoAlgo = ocupado && text !== '';
 
   return (
     <section className="card slide">
@@ -359,7 +274,8 @@ export function QuestionFlow({ questions, onAnswer, onExit, showHints = true }: 
         placeholder="Habla y aparecerá aquí. También puedes escribir."
         onChange={(event) => {
           setText(event.target.value);
-          cancelarCuenta();
+          textoRef.current = event.target.value;
+          despachar({ tipo: 'aMano' });
         }}
       />
 
@@ -371,8 +287,6 @@ export function QuestionFlow({ questions, onAnswer, onExit, showHints = true }: 
               ? 'escuchando'
               : 'micrófono parado'}
         </span>
-        {/* Lo que costó el último turno, a la vista. Ya se medía y solo se veía en Ajustes,
-            que es donde no está quien espera. */}
         {dictado.lastTurn !== null && (
           <span>
             último turno {(dictado.lastTurn.audioMs / 1000).toFixed(1)} s →{' '}
@@ -392,8 +306,8 @@ export function QuestionFlow({ questions, onAnswer, onExit, showHints = true }: 
         <div className="notice notice--warn">
           <strong>Antes de guardarla, míralas.</strong>
           <p className="muted">
-            No se ha guardado. Esta respuesta se parece a las que salieron mal al dictar, y
-            lo que se guarda aquí es material para todas las entrevistas siguientes.
+            No se ha guardado. Esta respuesta se parece a las que salieron mal al dictar, y lo
+            que se guarda aquí es material para todas las entrevistas siguientes.
           </p>
           <ul className="reasons">
             {fase.review.reasons.map((reason) => (
@@ -404,7 +318,7 @@ export function QuestionFlow({ questions, onAnswer, onExit, showHints = true }: 
             <button type="button" className="btn" onClick={repetir}>
               Repetir la respuesta
             </button>
-            <button type="button" className="btn btn--ghost" onClick={guardar}>
+            <button type="button" className="btn btn--ghost" onClick={guardarIgual}>
               Guardarla igual
             </button>
             <button type="button" className="btn btn--ghost" onClick={saltar}>
@@ -416,15 +330,14 @@ export function QuestionFlow({ questions, onAnswer, onExit, showHints = true }: 
 
       {fase.tipo === 'avanzando' && (
         <p className="notice">
-          Paso a la siguiente en {fase.quedan} s. Sigue hablando o escribe para quedarte
-          aquí.{' '}
-          <button type="button" className="btn btn--ghost" onClick={cancelarCuenta}>
+          Paso a la siguiente en {fase.quedan} s. Sigue hablando o escribe para quedarte aquí.{' '}
+          <button type="button" className="btn btn--ghost" onClick={quedarme}>
             Quedarme
           </button>
         </p>
       )}
 
-      {(fase.tipo === 'respondiendo' || fase.tipo === 'quieto') && ocupado && text !== '' && (
+      {(fase.tipo === 'respondiendo' || fase.tipo === 'quieto') && esperandoAlgo && (
         <p className="muted small">
           {dictado.pending > 0
             ? 'Esperando al resto de lo que has dicho antes de contar para avanzar.'
@@ -437,9 +350,12 @@ export function QuestionFlow({ questions, onAnswer, onExit, showHints = true }: 
           type="button"
           className="btn"
           disabled={
-            text.trim() === '' || fase.tipo === 'guardando' || fase.tipo === 'revisando'
+            text.trim() === '' ||
+            fase.tipo === 'guardando' ||
+            fase.tipo === 'comprobando' ||
+            fase.tipo === 'revisando'
           }
-          onClick={guardarYSeguir}
+          onClick={guardar}
         >
           {fase.tipo === 'guardando' ? 'Guardando…' : 'Guardar y siguiente'}
         </button>
@@ -451,7 +367,10 @@ export function QuestionFlow({ questions, onAnswer, onExit, showHints = true }: 
         </button>
       </div>
 
-      <p className="muted small">Ctrl+Enter para guardar y seguir · Esc para salir</p>
+      <p className="muted small">
+        Ctrl+Enter para guardar y seguir · Esc para salir · avanza sola tras{' '}
+        {SEGUNDOS_PARA_AVANZAR} s en silencio
+      </p>
 
       {dictado.transcriptError !== null && <p className="error">{dictado.transcriptError}</p>}
       {dictado.error !== null && <p className="error">{dictado.error}</p>}

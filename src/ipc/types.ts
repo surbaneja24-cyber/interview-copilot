@@ -297,6 +297,28 @@ export type InterviewView = InterviewState & {
   readonly pendingQuestion: string | null;
 };
 
+/**
+ * La sugerencia tal y como la va montando la pantalla mientras llega.
+ *
+ * Lleva dentro **la pregunta a la que contesta**, y no es redundante: si el entrevistador
+ * amplía la pregunta mientras el modelo trabaja, la petición en vuelo ya no sirve y no se
+ * puede cancelar a mitad. Guardar la pregunta permite no enseñarla, que es lo que hace falta.
+ */
+export interface Sugerencia {
+  readonly pregunta: string;
+  readonly texto: string;
+  readonly keyPoints: readonly string[];
+  readonly followUps: readonly string[];
+  readonly fragmentos?: number;
+  /** A dónde se envió. Cadena vacía si no salió del equipo. */
+  readonly sentTo?: string;
+  readonly citas?: number;
+  readonly elapsedMs?: number;
+  /** El modelo dijo que no hay material del candidato para contestar esto (§6). */
+  readonly sinMaterial?: string;
+  readonly fallo?: string;
+}
+
 export interface CaptureStatus {
   readonly source: Source;
   readonly capturing: boolean;

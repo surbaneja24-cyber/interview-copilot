@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { PrepareView } from '@/views/PrepareView';
 import { TrainingView } from '@/views/TrainingView';
+import { InterviewView } from '@/views/InterviewView';
 import { ProjectsView } from '@/views/ProjectsView';
 import { SettingsView } from '@/views/SettingsView';
 
@@ -19,7 +20,6 @@ const VIEW_LABELS: Record<View, string> = {
 
 /** Fases del roadmap que aún no existen. Se listan para no fingir que hay funcionalidad. */
 const PENDING: Record<string, string> = {
-  interview: 'Fase 5 — transcripción en vivo y respuestas',
   practice: 'Fase 7 — entrevista simulada y puntuación',
 };
 
@@ -48,6 +48,7 @@ export function App() {
         {view === 'projects' && <ProjectsView />}
         {view === 'prepare' && <PrepareView />}
         {view === 'training' && <TrainingView />}
+        {view === 'interview' && <InterviewView />}
         {view === 'settings' && <SettingsView />}
         {PENDING[view] !== undefined && (
           <>

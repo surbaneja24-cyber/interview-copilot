@@ -399,7 +399,9 @@ se borraron el 2026-08-22, comprobando que los trozos del CV siguen a la misma d
       mientras se elegía a mano
 - [ ] Retrieval especulativo durante las pausas
 - [ ] Prefijo de prompt cacheado
-- [ ] UI de entrevista: transcript, tipo de pregunta, respuesta, key points, follow-ups (§9)
+- [x] **UI de entrevista** (§9): estado, la pregunta encima de la sugerencia, key points,
+      follow-ups, citas verificadas y el transcript turno a turno. Es la pantalla más delgada
+      del proyecto a propósito — todo lo que puede equivocarse está en Rust y tiene tests
 - [ ] Modos de ventana Normal / Compact / Minimal (§30)
 - [ ] Tema, opacidad, tamaño de fuente
 

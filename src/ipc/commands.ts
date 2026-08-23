@@ -78,6 +78,25 @@ export function interviewPoll(take: boolean): Promise<InterviewView> {
   return invoke<InterviewView>('interview_poll', { take });
 }
 
+/**
+ * Prepara la sugerencia de la pregunta que la entrevista tenga pendiente.
+ *
+ * Se llama en cada sondeo y casi siempre no hace nada: devuelve `false` si no había nada que
+ * preparar. Recoger la pregunta y contestarla van en la misma llamada a propósito — así no
+ * puede pasar que alguien se lleve la pregunta y no informe nunca de si llegó la sugerencia,
+ * que dejaría la entrevista esperando para siempre.
+ *
+ * El estilo lo pone el clasificador, no un desplegable.
+ */
+export function interviewAsk(
+  projectId: number,
+  onEvent: (event: AnswerEvent) => void,
+): Promise<boolean> {
+  const channel = new Channel<AnswerEvent>();
+  channel.onmessage = onEvent;
+  return invoke<boolean>('interview_ask', { projectId, onEvent: channel });
+}
+
 /** La sugerencia llegó, o no va a llegar. */
 export function interviewSuggestion(ok: boolean): Promise<InterviewView> {
   return invoke<InterviewView>('interview_suggestion', { ok });

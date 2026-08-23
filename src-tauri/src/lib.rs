@@ -69,6 +69,65 @@ fn interview_suggestion(
     state.interview_suggestion(ok)
 }
 
+/// Prepara la sugerencia de la pregunta que la entrevista tenga pendiente.
+///
+/// Se llama en cada sondeo y **casi siempre no hace nada**: devuelve `false` si no hay nada
+/// que preparar. Que recoger la pregunta y contestarla vayan en la misma llamada no es
+/// comodidad, es lo que hace imposible el fallo obvio — llevarse la pregunta y no informar
+/// nunca de si llego la sugerencia, dejando la entrevista esperando para siempre.
+///
+/// El estilo lo pone el clasificador. Parar a elegirlo de un desplegable mientras alguien te
+/// mira por videollamada no es una opcion, y ademas §5.2 ya hace que el material dependa del
+/// tipo de pregunta: elegirlo a mano seria poder desalinear las dos cosas.
+#[tauri::command]
+async fn interview_ask(
+    state: tauri::State<'_, AppState>,
+    project_id: i64,
+    on_event: tauri::ipc::Channel<AnswerEvent>,
+) -> AppResult<bool> {
+    let Some(question) = state.interview_poll(true)?.pending_question else {
+        return Ok(false);
+    };
+
+    let style = AnswerStyle::for_kind(training::classifier::classify(&question).kind);
+    log::info!("entrevista: preparando \"{question}\" como {style:?}");
+
+    let respondido = answer_now(&state, project_id, &question, style, &on_event).await;
+
+    // Pase lo que pase, la maquina tiene que enterarse. Si esto se saltara en el camino de
+    // error, la entrevista se quedaria en "preparando" hasta que alguien saliera.
+    state.interview_suggestion(respondido.is_ok())?;
+    respondido.map(|()| true)
+}
+
+/// El cuerpo compartido por `ask` y `interview_ask`.
+async fn answer_now(
+    state: &AppState,
+    project_id: i64,
+    question: &str,
+    style: AnswerStyle,
+    on_event: &tauri::ipc::Channel<AnswerEvent>,
+) -> AppResult<()> {
+    let settings = state.llm_settings()?;
+    let provider = state.llm_provider()?;
+    let embedder = state.embedder()?;
+
+    let mut emit = |event: AnswerEvent| {
+        if let Err(err) = on_event.send(event) {
+            log::warn!("no se pudo enviar el evento a la UI: {err}");
+        }
+    };
+
+    answering::Answering {
+        db: &state.db,
+        embedder: embedder.as_ref(),
+        provider: provider.as_ref(),
+        settings: &settings,
+    }
+    .answer(project_id, question, style, &mut emit)
+    .await
+}
+
 /// De que tipo es una pregunta de entrevista (§7), o `null` si las reglas no se mojan.
 ///
 /// Por reglas y sin modelo: son microsegundos, y clasificar con el LLM anadiria una pasada
@@ -487,24 +546,7 @@ async fn ask(
         return Err(AppError::Invalid("Escribe una pregunta".into()));
     }
 
-    let settings = state.llm_settings()?;
-    let provider = state.llm_provider()?;
-    let embedder = state.embedder()?;
-
-    let mut emit = |event: AnswerEvent| {
-        if let Err(err) = on_event.send(event) {
-            log::warn!("no se pudo enviar el evento a la UI: {err}");
-        }
-    };
-
-    answering::Answering {
-        db: &state.db,
-        embedder: embedder.as_ref(),
-        provider: provider.as_ref(),
-        settings: &settings,
-    }
-    .answer(project_id, &question, style, &mut emit)
-    .await
+    answer_now(&state, project_id, &question, style, &on_event).await
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -559,6 +601,7 @@ pub fn run() {
             interview_leave,
             interview_poll,
             interview_suggestion,
+            interview_ask,
             index_pending,
             search_context,
             model_status,

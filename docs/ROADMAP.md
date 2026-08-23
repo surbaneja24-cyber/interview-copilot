@@ -390,7 +390,13 @@ se borraron el 2026-08-22, comprobando que los trozos del CV siguen a la misma d
       contesta a destiempo. Nueve tests. **Quién habla se sabe por la fuente y cuándo empieza
       por el VAD**: el texto llega segundos tarde y "el candidato ha empezado a contestar" es
       lo que cierra la pregunta
-- [ ] Pedirle la sugerencia a `llm::answering` cuando la sesión deja una pregunta pendiente
+- [x] **La sugerencia se pide sola** cuando la sesión deja una pregunta pendiente
+      (`interview_ask`). Recoger la pregunta y contestarla van en la misma llamada, para que
+      no pueda quedarse una entrevista en "preparando" porque alguien se llevó la pregunta y
+      no informó
+- [x] **El estilo lo pone el clasificador, no un desplegable**, y su reparto queda alineado
+      con el material de §5.2: redactar en un molde y apoyarse en otro corpus era posible
+      mientras se elegía a mano
 - [ ] Retrieval especulativo durante las pausas
 - [ ] Prefijo de prompt cacheado
 - [ ] UI de entrevista: transcript, tipo de pregunta, respuesta, key points, follow-ups (§9)

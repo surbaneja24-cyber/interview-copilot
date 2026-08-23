@@ -1196,12 +1196,59 @@ descartar tiene 2. Entre 2 y 3 no cabe ningun entero, asi que aqui no hay margen
 como en `MIN_TURN_MS` o `MIN_WORDS`: el umbral esta pegado al borde y un "¿por que?" de dos
 palabras caeria del lado equivocado. Es el mas fragil de los tres umbrales del proyecto.
 
+### El enganche al audio
+
+`interview::session` traduce lo que reporta el audio a eventos de la maquina, y es la tercera
+pieza que puede equivocarse sin dar error: repetir una entrada ya vista, perder un turno o
+confundir quien hablaba no rompen nada, dan una entrevista que contesta a destiempo.
+
+**Las dos fuentes de eventos no son intercambiables**, y esa es la decision de diseno:
+
+| Evento | De donde | Cuando |
+|---|---|---|
+| "ha empezado a hablar" | el VAD | 64 ms |
+| "esto es lo que dijo" | el transcriptor | 2,4-3,8 s despues (§4.7) |
+
+No es un detalle de implementacion. *"El candidato ha empezado a contestar"* es el evento que
+**cierra la pregunta**, y enterarse por el texto seria enterarse tres segundos tarde: el turno
+siguiente del entrevistador se pegaria a la pregunta anterior.
+
+La sesion se acuerda de **cuantas** entradas ha visto, no de la ultima: comparando por
+contenido, dos "si" seguidos contarian como uno.
+
+Y la maquina avanza cuando alguien mira, sin hilo propio. Nada de ella depende del reloj, asi
+que si nadie mira no se pierde nada — todavia no se ha calculado.
+
+### La sugerencia, y el estilo que ya no elige nadie
+
+`interview_ask` recoge la pregunta pendiente y la contesta por el mismo camino que la pantalla
+de probar. Que **recoger y contestar vayan en la misma llamada** no es comodidad: hace
+imposible el fallo obvio, llevarse la pregunta y no informar nunca de si llego la sugerencia,
+que dejaria la entrevista en "preparando" para siempre. Y el aviso a la maquina se manda
+tambien en el camino de error, por lo mismo.
+
+**El estilo lo pone el clasificador.** Parar a elegirlo de un desplegable mientras alguien te
+mira por videollamada no es una opcion, pero el motivo de fondo es otro: §5.2 ya hace que el
+material dependa del tipo de pregunta, asi que dejar el estilo a mano seria poder redactar en
+un molde y apoyarse en otro corpus. El reparto queda alineado con el de §5.2 y hay un test que
+lo fija:
+
+| Tipo | Estilo | Material (§5.2) |
+|---|---|---|
+| `Behavioral`, `Situational` | Behavioral (STAR) | solo del candidato |
+| `Experience` | Technical | solo del candidato |
+| `Motivation`, `Logistics` | General | todo, la oferta incluida |
+| `SelfAssessment` | General | solo del candidato |
+| sin clasificar | General | solo del candidato |
+
+Sin clasificar cae en `General` y eso no es un descarte: es el unico estilo que vuelve a
+preguntarle al clasificador para decidir el material, asi que es el que se porta bien cuando
+no se sabe el tipo.
+
 ### Lo que todavia no esta
 
-Engancharla al audio de verdad y a `llm::answering`. Va aparte a proposito: una maquina de
-estados que se estrena ya conectada a un microfono, un modelo y una pantalla no se depura, se
-adivina — y **los cinco fallos de este proyecto que se han encontrado usando la aplicacion en
-vez de con un test han salido todos de ahi**.
+La pantalla de entrevista (§9) y los modos de ventana (§30). El motor esta entero: entra
+audio por dos sitios, sale una sugerencia verificada.
 
 ## 6. Protección de captura (§26-33)
 

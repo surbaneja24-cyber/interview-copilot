@@ -31,8 +31,9 @@ use crate::storage::DocumentKind;
 
 /// Estilo de respuesta segun el tipo de pregunta (§8).
 ///
-/// La deteccion automatica es §7 y llega en la Fase 5; hasta entonces lo elige el usuario
-/// a mano. El enum ya existe para que el clasificador solo tenga que rellenarlo.
+/// En la pantalla de probar lo elige el usuario a mano. **En la entrevista lo pone el
+/// clasificador de §7** con `for_kind`: parar a elegir de un desplegable mientras alguien te
+/// mira por videollamada no es una opcion.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AnswerStyle {
@@ -42,6 +43,33 @@ pub enum AnswerStyle {
 }
 
 impl AnswerStyle {
+    /// Con que forma se redacta la respuesta a una pregunta de este tipo (§7).
+    ///
+    /// Hasta ahora el estilo lo elegia el usuario en un desplegable, que es razonable en la
+    /// pantalla de probar y absurdo en mitad de una entrevista. Lo pone el clasificador.
+    ///
+    /// El reparto no es libre: tiene que quedar de acuerdo con el material que
+    /// `answering::material_for` deja entrar para cada tipo (§5.2), o la respuesta se
+    /// redactaria en un estilo y se apoyaria en otro corpus.
+    ///
+    /// - `Behavioral` y `Situational` piden una historia, pasada o hipotetica, y las dos se
+    ///   cuentan igual: situacion, que hiciste, como acabo.
+    /// - `Experience` es la mas cercana a lo tecnico: "¿con que herramientas trabajas?" se
+    ///   contesta con la respuesta directa delante y el ejemplo detras.
+    /// - `Motivation`, `SelfAssessment` y `Logistics` no encajan en ninguno de los dos
+    ///   moldes, y forzarlas seria peor que dejarlas en el general.
+    pub fn for_kind(kind: Option<crate::training::QuestionKind>) -> Self {
+        use crate::training::QuestionKind as Kind;
+        match kind {
+            Some(Kind::Behavioral | Kind::Situational) => Self::Behavioral,
+            Some(Kind::Experience) => Self::Technical,
+            // Sin clasificar tambien cae aqui, y no es un descarte: `General` es el unico que
+            // vuelve a preguntarle al clasificador para decidir el material, asi que es el
+            // que se comporta bien cuando no se sabe el tipo.
+            Some(Kind::Motivation | Kind::SelfAssessment | Kind::Logistics) | None => Self::General,
+        }
+    }
+
     fn guidance(self) -> &'static str {
         match self {
             Self::Behavioral => {
@@ -211,6 +239,30 @@ pub fn structure_hint(style: AnswerStyle) -> Vec<String> {
             "Apoyalo en algo que si hayas hecho.".into(),
             "Si no lo has hecho, dilo y explica como lo aprenderias.".into(),
         ],
+    }
+}
+
+#[cfg(test)]
+mod estilo_tests {
+    use super::*;
+    use crate::training::QuestionKind as Kind;
+
+    /// Una pregunta de comportamiento se cuenta en STAR, y una tecnica con la respuesta
+    /// delante. Es lo que separa una sugerencia util de un parrafo.
+    #[test]
+    fn cada_tipo_de_pregunta_tiene_su_forma() {
+        assert_eq!(AnswerStyle::for_kind(Some(Kind::Behavioral)), AnswerStyle::Behavioral);
+        assert_eq!(AnswerStyle::for_kind(Some(Kind::Situational)), AnswerStyle::Behavioral);
+        assert_eq!(AnswerStyle::for_kind(Some(Kind::Experience)), AnswerStyle::Technical);
+        assert_eq!(AnswerStyle::for_kind(Some(Kind::Motivation)), AnswerStyle::General);
+        assert_eq!(AnswerStyle::for_kind(Some(Kind::Logistics)), AnswerStyle::General);
+    }
+
+    /// Y sin clasificar se va al general, que es el unico que vuelve a preguntar por el
+    /// material en vez de darlo por decidido.
+    #[test]
+    fn sin_clasificar_se_va_al_general() {
+        assert_eq!(AnswerStyle::for_kind(None), AnswerStyle::General);
     }
 }
 

@@ -384,7 +384,13 @@ se borraron el 2026-08-22, comprobando que los trozos del CV siguen a la misma d
 - [x] **Disparador: qué turno merece una pasada del pipeline.** Conservador a propósito,
       porque saltarse una pregunta no se compara con gastar una pasada: **descarta 3 de las 7
       frases que no son preguntas y ninguna de las 32 que sí lo son**
-- [ ] Engancharla al audio y a `llm::answering`
+- [x] **Enganchada al audio.** `interview::session` traduce lo que reporta el audio a eventos
+      de la máquina, y es la tercera pieza que se equivoca en silencio: repetir una entrada ya
+      vista, perder un turno o confundir quién hablaba no dan error, dan una entrevista que
+      contesta a destiempo. Nueve tests. **Quién habla se sabe por la fuente y cuándo empieza
+      por el VAD**: el texto llega segundos tarde y "el candidato ha empezado a contestar" es
+      lo que cierra la pregunta
+- [ ] Pedirle la sugerencia a `llm::answering` cuando la sesión deja una pregunta pendiente
 - [ ] Retrieval especulativo durante las pausas
 - [ ] Prefijo de prompt cacheado
 - [ ] UI de entrevista: transcript, tipo de pregunta, respuesta, key points, follow-ups (§9)

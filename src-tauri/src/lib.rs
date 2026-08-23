@@ -36,6 +36,39 @@ use storage::{Db, Document, DocumentKind, NewDocument, NewProject, Project};
 const DB_FILE: &str = "interview-copilot.db";
 const MODELS_DIR: &str = "models";
 
+/// Entrar en la entrevista. Lo dicho antes de este momento no cuenta.
+#[tauri::command]
+fn interview_enter(state: tauri::State<'_, AppState>) -> AppResult<state::InterviewView> {
+    state.interview_enter()
+}
+
+#[tauri::command]
+fn interview_leave(state: tauri::State<'_, AppState>) -> AppResult<state::InterviewView> {
+    state.interview_leave()
+}
+
+/// Adelanta la entrevista con lo que haya pasado y devuelve el estado.
+///
+/// `take` se lleva la pregunta pendiente. La pantalla lo pide en `true` cuando esta lista
+/// para preparar la sugerencia y en `false` cuando solo esta dibujando: dejarla sin recoger
+/// haria que se preparase otra vez en el sondeo siguiente.
+#[tauri::command]
+fn interview_poll(
+    state: tauri::State<'_, AppState>,
+    take: bool,
+) -> AppResult<state::InterviewView> {
+    state.interview_poll(take)
+}
+
+/// La sugerencia llego, o no va a llegar.
+#[tauri::command]
+fn interview_suggestion(
+    state: tauri::State<'_, AppState>,
+    ok: bool,
+) -> AppResult<state::InterviewView> {
+    state.interview_suggestion(ok)
+}
+
 /// De que tipo es una pregunta de entrevista (§7), o `null` si las reglas no se mojan.
 ///
 /// Por reglas y sin modelo: son microsegundos, y clasificar con el LLM anadiria una pasada
@@ -522,6 +555,10 @@ pub fn run() {
             save_prepared_answer,
             review_answer,
             classify_question,
+            interview_enter,
+            interview_leave,
+            interview_poll,
+            interview_suggestion,
             index_pending,
             search_context,
             model_status,

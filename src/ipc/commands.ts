@@ -10,6 +10,7 @@ import type {
   HardwareReport,
   IndexReport,
   InputDevice,
+  InterviewView,
   LlmSettings,
   ModelStatus,
   NewProject,
@@ -56,6 +57,30 @@ export function listDocuments(projectId: number): Promise<readonly DocumentInfo[
  */
 export function reviewAnswer(answer: string): Promise<AnswerReview> {
   return invoke<AnswerReview>('review_answer', { answer });
+}
+
+/** Entrar en la entrevista. Lo dicho antes de este momento no cuenta. */
+export function interviewEnter(): Promise<InterviewView> {
+  return invoke<InterviewView>('interview_enter');
+}
+
+export function interviewLeave(): Promise<InterviewView> {
+  return invoke<InterviewView>('interview_leave');
+}
+
+/**
+ * Adelanta la entrevista con lo que haya pasado y devuelve el estado.
+ *
+ * `take` se lleva la pregunta pendiente, y con ella el compromiso de prepararla: dejarla sin
+ * recoger haría que se preparase otra vez en el sondeo siguiente. En `false` para dibujar.
+ */
+export function interviewPoll(take: boolean): Promise<InterviewView> {
+  return invoke<InterviewView>('interview_poll', { take });
+}
+
+/** La sugerencia llegó, o no va a llegar. */
+export function interviewSuggestion(ok: boolean): Promise<InterviewView> {
+  return invoke<InterviewView>('interview_suggestion', { ok });
 }
 
 export function candidateDocuments(kind?: DocumentKind): Promise<readonly DocumentInfo[]> {

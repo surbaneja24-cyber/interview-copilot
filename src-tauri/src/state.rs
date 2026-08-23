@@ -3,7 +3,8 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use crate::audio::vad::{self, VadModel};
+use crate::audio::vad::{self, Turn, VadModel};
+use crate::interview::session::{Session, Snapshot};
 use crate::audio::{CaptureStatus, Recorder, Source};
 use crate::stt::{self, TranscriptState, Transcriber};
 use crate::embedding::LocalEmbeddingProvider;
@@ -12,6 +13,22 @@ use crate::llm::settings::SETTINGS_KEY;
 use crate::llm::{HttpProvider, LlmProvider, LlmSettings, ProviderKind};
 use crate::secrets;
 use crate::storage::Db;
+
+/// Lo que la pantalla ve de la entrevista.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InterviewView {
+    #[serde(flatten)]
+    pub state: crate::interview::machine::State,
+    /// Turnos descartados por no parecer preguntas. A la vista porque lo que se tira hay que
+    /// poder verlo: si esto sube rapido, el filtro se esta comiendo preguntas.
+    pub skipped: usize,
+    /// La pregunta que hay que preparar, si se ha pedido recogerla.
+    ///
+    /// **No se puede llamar `question`**: el estado aplanado ya trae un campo con ese nombre
+    /// y uno pisaria al otro en silencio. Lo caza `vista_tests`.
+    pub pending_question: Option<String>,
+}
 
 pub struct AppState {
     pub db: Db,
@@ -41,6 +58,12 @@ pub struct AppState {
     /// tenga modelo, y el modelo de whisper no se carga hasta el primer turno: son ~200 MB
     /// y esta maquina los necesita para otras cosas mientras nadie hable.
     transcriber: Mutex<Option<Transcriber>>,
+    /// La entrevista en marcha.
+    ///
+    /// Vive en el estado y no en la pantalla porque **la entrevista no puede depender de que
+    /// una ventana siga abierta**: el usuario cambia a Ajustes a mirar el medidor y vuelve, y
+    /// lo que se dijo mientras tanto sigue siendo parte de la misma entrevista.
+    interview: Mutex<Session>,
     /// El modelo del VAD, cargado una vez y compartido por las dos capturas.
     ///
     /// Son 2,3 MB en disco y 250 ms de construir la sesion de ONNX Runtime, medidos en
@@ -64,6 +87,7 @@ impl AppState {
             mic: Mutex::new(None),
             system: Mutex::new(None),
             transcriber: Mutex::new(None),
+            interview: Mutex::new(Session::new()),
             vad: Mutex::new(None),
         }
     }
@@ -132,6 +156,69 @@ impl AppState {
         *slot = Some(recorder);
 
         Ok(status)
+    }
+
+    /// Entrar en la entrevista.
+    pub fn interview_enter(&self) -> AppResult<InterviewView> {
+        let entries = self.transcript().map_or(0, |state| state.entries.len());
+        {
+            let mut session = self.interview_lock()?;
+            session.enter(entries);
+        }
+        self.look(false)
+    }
+
+    pub fn interview_leave(&self) -> AppResult<InterviewView> {
+        self.interview_lock()?.leave();
+        self.look(false)
+    }
+
+    /// Anota que la sugerencia llego, o que no va a llegar.
+    pub fn interview_suggestion(&self, ok: bool) -> AppResult<InterviewView> {
+        self.interview_lock()?.suggestion(ok);
+        self.look(false)
+    }
+
+    /// Mira el mundo, adelanta la maquina y devuelve el estado.
+    ///
+    /// `recoger` se lleva la pregunta pendiente: quien la pide se compromete a prepararla, y
+    /// dejarla ahi haria que se preparase otra vez en el sondeo siguiente. Consultar el
+    /// estado para dibujar no se la lleva.
+    pub fn interview_poll(&self, recoger: bool) -> AppResult<InterviewView> {
+        let transcript = self.transcript();
+        let entries = transcript.map(|state| state.entries).unwrap_or_default();
+        let hablando = |source: Source| {
+            self.status_of(source)
+                .vad
+                .is_some_and(|vad| vad.turn == Turn::Speaking)
+        };
+
+        let snapshot = Snapshot {
+            entries: &entries,
+            mic_speaking: hablando(Source::Mic),
+            system_speaking: hablando(Source::System),
+        };
+
+        let mut session = self.interview_lock()?;
+        session.observe(&snapshot);
+        drop(session);
+
+        self.look(recoger)
+    }
+
+    fn look(&self, recoger: bool) -> AppResult<InterviewView> {
+        let mut session = self.interview_lock()?;
+        Ok(InterviewView {
+            state: session.state().clone(),
+            skipped: session.skipped(),
+            pending_question: if recoger { session.take_pending() } else { None },
+        })
+    }
+
+    fn interview_lock(&self) -> AppResult<std::sync::MutexGuard<'_, Session>> {
+        self.interview
+            .lock()
+            .map_err(|err| AppError::Poisoned(err.to_string()))
     }
 
     pub fn models_dir(&self) -> &std::path::Path {
@@ -383,4 +470,32 @@ fn directory_size(path: &std::path::Path) -> u64 {
             Err(_) => 0,
         })
         .sum()
+}
+
+#[cfg(test)]
+mod vista_tests {
+    use super::*;
+    use crate::interview::machine::State;
+
+    /// La forma exacta del JSON que ve la pantalla.
+    ///
+    /// `InterviewView` aplana el estado, y el estado **tambien** lleva un campo con la
+    /// pregunta. Dos campos con el mismo nombre en un `flatten` no dan error de compilacion:
+    /// uno pisa al otro en silencio, y el que pierde es el que la pantalla necesitaba.
+    #[test]
+    fn la_vista_no_pisa_la_pregunta_del_estado() {
+        let vista = InterviewView {
+            state: State::Preparing { question: "¿Por qué quieres trabajar aquí?".into() },
+            skipped: 2,
+            pending_question: Some("¿Por qué quieres trabajar aquí?".into()),
+        };
+
+        let json = serde_json::to_value(&vista).expect("serializar");
+        println!("{json}");
+
+        assert_eq!(json["state"], "preparing");
+        assert_eq!(json["question"], "¿Por qué quieres trabajar aquí?");
+        assert_eq!(json["pendingQuestion"], "¿Por qué quieres trabajar aquí?");
+        assert_eq!(json["skipped"], 2);
+    }
 }

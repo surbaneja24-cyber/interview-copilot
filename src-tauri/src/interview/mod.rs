@@ -13,11 +13,15 @@
 //! - `machine` decide en que punto de la entrevista estamos y cuando toca preparar algo. Es
 //!   una maquina de estados sin nada de fuera dentro, igual que `TurnDetector`, y se prueba
 //!   con eventos escritos a mano.
+//! - `session` traduce lo que reporta el audio —entradas del transcriptor y estado del VAD—
+//!   a eventos de la maquina. Es la tercera que se equivoca en silencio: repetir una entrada
+//!   ya vista, perder un turno o confundir quien hablaba no dan error, dan una entrevista
+//!   que contesta a destiempo.
 //!
-//! Lo que **todavia no esta**: engancharla al audio de verdad y a `llm::answering`. Va
-//! aparte a proposito. Una maquina de estados que se estrena ya conectada a un microfono, un
-//! modelo y una pantalla no se depura, se adivina — y en este proyecto los cinco fallos que
-//! se han encontrado usando la aplicacion y no con un test han salido todos de ahi.
+//! Lo que **todavia no esta**: pedirle la sugerencia a `llm::answering` cuando la sesion deja
+//! una pregunta pendiente, y la pantalla. La pregunta se queda esperando a que alguien la
+//! recoja, que es lo que permite estrenar el enganche sin estrenar tambien el modelo.
 
 pub mod machine;
+pub mod session;
 pub mod trigger;

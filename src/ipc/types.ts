@@ -264,6 +264,39 @@ export interface AnswerReview {
   readonly words: number;
 }
 
+/**
+ * En qué punto está la entrevista.
+ *
+ * `question` viaja con `preparing` y `suggesting` porque la pantalla tiene que poder enseñar
+ * a qué se está contestando: una sugerencia sin la pregunta delante no se puede juzgar.
+ */
+export type InterviewState =
+  | { readonly state: 'off' }
+  | { readonly state: 'waiting' }
+  /** El entrevistador está hablando ahora mismo. */
+  | { readonly state: 'asking' }
+  | { readonly state: 'preparing'; readonly question: string }
+  | { readonly state: 'suggesting'; readonly question: string }
+  /** El candidato contesta, con la sugerencia todavía delante. */
+  | { readonly state: 'answering'; readonly question: string };
+
+export type InterviewView = InterviewState & {
+  /**
+   * Turnos descartados por no parecer preguntas.
+   *
+   * A la vista porque lo que se tira hay que poder verlo: si sube rápido, el filtro se está
+   * comiendo preguntas de verdad.
+   */
+  readonly skipped: number;
+  /**
+   * La pregunta que hay que preparar, si se pidió recogerla.
+   *
+   * Distinta de la `question` del estado, que es a la que se está contestando ahora. Aquí no
+   * pueden llamarse igual: el backend aplana el estado sobre esta vista.
+   */
+  readonly pendingQuestion: string | null;
+};
+
 export interface CaptureStatus {
   readonly source: Source;
   readonly capturing: boolean;
